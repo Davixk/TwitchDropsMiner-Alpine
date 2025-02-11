@@ -1,7 +1,7 @@
 name: sync-fork-and-add-tag
 on:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '27 7 * * *'
   workflow_dispatch: { }
 jobs:
   sync:
