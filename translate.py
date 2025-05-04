@@ -178,12 +178,6 @@ class GUIPriorityModes(TypedDict):
     low_availability: str
 
 
-class GUIPriorityModes(TypedDict):
-    priority_only: str
-    ending_soonest: str
-    low_availability: str
-
-
 class GUISettings(TypedDict):
     general: GUISettingsGeneral
     priority_modes: GUIPriorityModes
@@ -376,9 +370,11 @@ default_translation: Translation = {
             "general": {
                 "name": "General",
                 "autostart": "Autostart: ",
+                "dark_theme": "Dark theme: ",
                 "tray": "Autostart into tray: ",
                 "tray_notifications": "Tray notifications: ",
                 "priority_mode": "Priority mode: ",
+                "prioritize_by_ending_soonest": "Prioritize by ending soonest: ",
                 "proxy": "Proxy (requires restart):",
             },
             "priority_modes": {
