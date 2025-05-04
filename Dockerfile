@@ -1,38 +1,80 @@
-# Build stage
-FROM python:alpine
+# ---- Builder Stage ----
+FROM jlesage/baseimage-gui:alpine-3.18-v4.7 AS builder
 
-# Install build dependencies
-RUN apk add --no-cache \
-    # Basic build tools
+# Install Python and build deps
+RUN add-pkg \
+    python3 \
+    py3-pip \
     build-base \
     python3-dev \
     musl-dev \
     linux-headers \
     git \
-    # Pillow dependencies
     jpeg-dev \
     zlib-dev \
     freetype-dev \
-    # Complete Tkinter dependencies
     tk-dev \
     tcl-dev \
     python3-tkinter
 
-# Create app directory
 WORKDIR /app
-
-# Copy your application files
 COPY . .
 
-# Create and activate virtual environment
+# Create venv, install deps, build binary
 RUN python3 -m venv env && \
     . env/bin/activate && \
-    # Upgrade pip and install wheel
-    pip install --upgrade pip && \
-    pip install wheel && \
-    # Install requirements with optimizations
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install pyinstaller
+    pip install --upgrade pip wheel && \
+    pip install --no-cache-dir -r requirements.txt pyinstaller && \
+    pyinstaller build.spec && \
+    # Rename the binary to avoid spaces in filename
+    mv "/app/dist/Twitch Drops Miner (by DevilXD)" /app/dist/TwitchDropsMiner
 
-# Build the application
-RUN . env/bin/activate && pyinstaller build.spec
+# ---- Runtime Stage ----
+FROM jlesage/baseimage-gui:alpine-3.18-v4.7
+
+# Environment variables
+ENV LANG=en_US.UTF-8 \
+    DARK_MODE=1 \
+    KEEP_APP_RUNNING=1 \
+    APP_ICON_URL=https://raw.githubusercontent.com/fireph/TwitchDropsMiner-Alpine/master/appimage/pickaxe.png
+
+# Install runtime dependencies only
+RUN add-pkg \
+    jpeg \
+    zlib \
+    freetype \
+    tk \
+    tcl \
+    font-noto \
+    font-noto-emoji \
+    fontconfig \
+    libx11 \
+    libxrender
+
+# Create TwitchDropsMiner directory
+RUN mkdir -p /TwitchDropsMiner
+
+# Copy the binary from builder stage
+COPY --from=builder /app/dist/TwitchDropsMiner /TwitchDropsMiner/TwitchDropsMiner
+
+# Set up config/cache links
+RUN mkdir -p /config /cache && \
+    ln -s /config /TwitchDropsMiner/config && \
+    ln -s /cache /TwitchDropsMiner/cache
+
+RUN chmod -R 777 /TwitchDropsMiner
+RUN chown -R 1000:1000 /TwitchDropsMiner /config /cache
+
+# Copy the start script
+COPY startapp.sh /startapp.sh
+RUN chmod +x /startapp.sh
+
+# Install icon
+RUN install_app_icon.sh "$APP_ICON_URL"
+
+# Set app info
+RUN set-cont-env APP_NAME "Twitch Drops Miner" && \
+    set-cont-env APP_VERSION "1.0"
+
+# Expose ports
+EXPOSE 5800 5900
