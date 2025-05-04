@@ -1,5 +1,5 @@
 > **Fork Information:**
-> This image is a modified version of [`fireph/TwitchDropsMiner-Alpine`](#link-to-fireph-repo-or-dockerhub) which incorporates upstream changes from the original repository by [DevilXD](#link-to-devilxd-repo). Please refer to the respective repositories for their documentation and licenses.
+> This image is a modified version of [`fireph/TwitchDropsMiner-Alpine`](https://github.com/fireph/TwitchDropsMiner-Alpine) which incorporates upstream changes from the original repository by [DevilXD](https://github.com/DevilXD) ([`DevilXD/TwitchDropsMiner`](https://github.com/DevilXD/TwitchDropsMiner)). Please refer to the respective repositories for their documentation and licenses.
 
 # Twitch Drops Miner on Alpine Linux!
 
