@@ -31,13 +31,21 @@ if sys.platform == "win32":
 from cache import CurrentSeconds
 from translate import _
 from cache import ImageCache
-from exceptions import ExitRequest
+from exceptions import MinerException, ExitRequest
 from utils import resource_path, set_root_icon, webopen, Game, _T
 from constants import (
-    SELF_PATH, OUTPUT_FORMATTER, WS_TOPICS_LIMIT, MAX_WEBSOCKETS, WINDOW_TITLE, State
+    SELF_PATH,
+    WINDOW_TITLE,
+    LOGGING_LEVELS,
+    MAX_WEBSOCKETS,
+    WS_TOPICS_LIMIT,
+    OUTPUT_FORMATTER,
+    State,
+    PriorityMode,
 )
+
 if sys.platform == "win32":
-    from registry import RegistryKey, ValueType
+    from registry import RegistryKey, ValueType, ValueNotFound
 
 
 if TYPE_CHECKING:
@@ -47,7 +55,9 @@ if TYPE_CHECKING:
     from inventory import DropsCampaign, TimedDrop
 
 
-TK_PADDING = Union[int, Tuple[int, int], Tuple[int, int, int], Tuple[int, int, int, int]]
+TK_PADDING = Union[
+    int, Tuple[int, int], Tuple[int, int, int], Tuple[int, int, int, int]
+]
 DIGITS = ceil(log10(WS_TOPICS_LIMIT))
 
 
@@ -71,14 +81,14 @@ class PlaceholderEntry(ttk.Entry):
         master: ttk.Widget,
         *args: Any,
         placeholder: str,
-        prefill: str = '',
+        prefill: str = "",
         placeholdercolor: str = "grey60",
         **kwargs: Any,
     ):
         super().__init__(master, *args, **kwargs)
         self._prefill: str = prefill
-        self._show: str = kwargs.get("show", '')
-        self._text_color: str = kwargs.get("foreground", '')
+        self._show: str = kwargs.get("show", "")
+        self._text_color: str = kwargs.get("foreground", "")
         self._ph_color: str = placeholdercolor
         self._ph_text: str = placeholder
         self.bind("<FocusIn>", self._focus_in)
@@ -96,7 +106,7 @@ class PlaceholderEntry(ttk.Entry):
         """
         if not super().get():
             self._ph = True
-            super().config(foreground=self._ph_color, show='')
+            super().config(foreground=self._ph_color, show="")
             super().insert("end", self._ph_text)
 
     def _remove_placeholder(self) -> None:
@@ -151,10 +161,10 @@ class PlaceholderEntry(ttk.Entry):
 
     def get(self) -> str:
         if self._ph:
-            return ''
+            return ""
         return super().get()
 
-    def insert(self, index: tk._EntryIndex, content: str) -> None:
+    def insert(self, index: str | int, content: str) -> None:
         # when inserting into the entry externally, disable the placeholder flag
         if not content:
             # if an empty string was passed in
@@ -162,7 +172,7 @@ class PlaceholderEntry(ttk.Entry):
         self._remove_placeholder()
         super().insert(index, content)
 
-    def delete(self, first: tk._EntryIndex, last: tk._EntryIndex | None = None) -> None:
+    def delete(self, first: str | int, last: str | int | None = None) -> None:
         super().delete(first, last)
         self._insert_placeholder()
 
@@ -179,7 +189,9 @@ class PlaceholderCombobox(PlaceholderEntry, ttk.Combobox):
 
 
 class PaddedListbox(tk.Listbox):
-    def __init__(self, master: ttk.Widget, *args, padding: TK_PADDING = (0, 0, 0, 0), **kwargs):
+    def __init__(
+        self, master: ttk.Widget, *args, padding: TK_PADDING = (0, 0, 0, 0), **kwargs
+    ):
         # we place the listbox inside a frame with the same background
         # this means we need to forward the 'grid' method to the frame, not the listbox
         self._frame = tk.Frame(master)
@@ -242,10 +254,12 @@ class PaddedListbox(tk.Listbox):
                 pady1 = pady2 = padding[1]
             elif len(padding) == 3:
                 padx1, padx2 = padding[0], padding[1]
-                pady1 = pady2 = padding[2]  # type: ignore
+                pady1 = pady2 = padding[2]
             else:
-                padx1, padx2, pady1, pady2 = padding  # type: ignore
-            super().grid(column=0, row=0, padx=(padx1, padx2), pady=(pady1, pady2), sticky="nsew")
+                padx1, padx2, pady1, pady2 = padding
+            super().grid(
+                column=0, row=0, padx=(padx1, padx2), pady=(pady1, pady2), sticky="nsew"
+            )
         else:
             super().grid(column=0, row=0, sticky="nsew")
         # listbox uses flat relief to blend in with the inside of the frame
@@ -258,14 +272,16 @@ class PaddedListbox(tk.Listbox):
 
 
 class MouseOverLabel(ttk.Label):
-    def __init__(self, *args, alt_text: str = '', reverse: bool = False, **kwargs) -> None:
-        self._org_text: str = ''
-        self._alt_text: str = ''
+    def __init__(
+        self, *args, alt_text: str = "", reverse: bool = False, **kwargs
+    ) -> None:
+        self._org_text: str = ""
+        self._alt_text: str = ""
         self._alt_reverse: bool = reverse
         self._bind_enter: str | None = None
         self._bind_leave: str | None = None
         super().__init__(*args, **kwargs)
-        self.configure(text=kwargs.get("text", ''), alt_text=alt_text, reverse=reverse)
+        self.configure(text=kwargs.get("text", ""), alt_text=alt_text, reverse=reverse)
 
     def _set_org(self, event: tk.Event[MouseOverLabel]):
         super().config(text=self._org_text)
@@ -279,11 +295,13 @@ class MouseOverLabel(ttk.Label):
             options.update(args[0])
         if kwargs:
             options.update(kwargs)
-        applicable_options: set[str] = set((
-            "text",
-            "reverse",
-            "alt_text",
-        ))
+        applicable_options: set[str] = set(
+            (
+                "text",
+                "reverse",
+                "alt_text",
+            )
+        )
         if applicable_options.intersection(options.keys()):
             # we need to pop some options, because they can't be passed down to the label,
             # as that will result in an error later down the line
@@ -356,9 +374,7 @@ class SelectMenu(tk.Menubutton, Generic[_T]):
         **kwargs: Any,
     ):
         width = max((len(k) for k in options.keys()), default=20)
-        super().__init__(
-            master, *args, relief=relief, width=width, **kwargs
-        )
+        super().__init__(master, *args, relief=relief, width=width, **kwargs)
         self._menu_options: dict[str, _T] = options
         self._command = command
         self.menu = tk.Menu(self, tearoff=tearoff)
@@ -377,6 +393,35 @@ class SelectMenu(tk.Menubutton, Generic[_T]):
         return self._menu_options[self.cget("text")]
 
 
+class SelectCombobox(ttk.Combobox):
+    def __init__(
+        self,
+        master: tk.Misc,
+        *args,
+        width_offset: int = 0,
+        width: int | None = None,
+        textvariable: tk.StringVar,
+        values: list[str] | tuple[str, ...],
+        command: abc.Callable[[tk.Event[SelectCombobox]], None] | None = None,
+        **kwargs,
+    ) -> None:
+        if width is None:
+            width = max(len(v) for v in values)
+        width += width_offset
+        super().__init__(
+            master,
+            *args,
+            width=width,
+            values=values,
+            state="readonly",
+            exportselection=False,
+            textvariable=textvariable,
+            **kwargs,
+        )
+        if command is not None:
+            self.bind("<<ComboboxSelected>>", command)
+
+
 ###########################################
 # GUI ELEMENTS END / GUI DEFINITION START #
 ###########################################
@@ -384,7 +429,9 @@ class SelectMenu(tk.Menubutton, Generic[_T]):
 
 class StatusBar:
     def __init__(self, manager: GUIManager, master: ttk.Widget):
-        frame = ttk.LabelFrame(master, text=_("gui", "status", "name"), padding=(4, 0, 4, 4))
+        frame = ttk.LabelFrame(
+            master, text=_("gui", "status", "name"), padding=(4, 0, 4, 4)
+        )
         frame.grid(column=0, row=0, columnspan=3, sticky="nsew", padx=2)
         self._label = ttk.Label(frame)
         self._label.grid(column=0, row=0, sticky="nsew")
@@ -393,7 +440,7 @@ class StatusBar:
         self._label.config(text=text)
 
     def clear(self):
-        self._label.config(text='')
+        self._label.config(text="")
 
 
 class _WSEntry(TypedDict):
@@ -403,13 +450,15 @@ class _WSEntry(TypedDict):
 
 class WebsocketStatus:
     def __init__(self, manager: GUIManager, master: ttk.Widget):
-        frame = ttk.LabelFrame(master, text=_("gui", "websocket", "name"), padding=(4, 0, 4, 4))
+        frame = ttk.LabelFrame(
+            master, text=_("gui", "websocket", "name"), padding=(4, 0, 4, 4)
+        )
         frame.grid(column=0, row=1, sticky="nsew", padx=2)
         self._status_var = StringVar(frame)
         self._topics_var = StringVar(frame)
         ttk.Label(
             frame,
-            text='\n'.join(
+            text="\n".join(
                 _("gui", "websocket", "websocket").format(id=i)
                 for i in range(1, MAX_WEBSOCKETS + 1)
             ),
@@ -429,7 +478,9 @@ class WebsocketStatus:
             justify="right",
             style="MS.TLabel",
         ).grid(column=2, row=0)
-        self._items: dict[int, _WSEntry | None] = {i: None for i in range(MAX_WEBSOCKETS)}
+        self._items: dict[int, _WSEntry | None] = {
+            i: None for i in range(MAX_WEBSOCKETS)
+        }
         self._update()
 
     def update(self, idx: int, status: str | None = None, topics: int | None = None):
@@ -456,13 +507,13 @@ class WebsocketStatus:
         topic_lines: list[str] = []
         for idx in range(MAX_WEBSOCKETS):
             if (item := self._items.get(idx)) is None:
-                status_lines.append('')
-                topic_lines.append('')
+                status_lines.append("")
+                topic_lines.append("")
             else:
                 status_lines.append(item["status"])
                 topic_lines.append(f"{item['topics']:>{DIGITS}}/{WS_TOPICS_LIMIT}")
-        self._status_var.set('\n'.join(status_lines))
-        self._topics_var.set('\n'.join(topic_lines))
+        self._status_var.set("\n".join(status_lines))
+        self._topics_var.set("\n".join(topic_lines))
 
 
 @dataclass
@@ -476,25 +527,34 @@ class LoginForm:
     def __init__(self, manager: GUIManager, master: ttk.Widget):
         self._manager = manager
         self._var = StringVar(master)
-        frame = ttk.LabelFrame(master, text=_("gui", "login", "name"), padding=(4, 0, 4, 4))
+        frame = ttk.LabelFrame(
+            master, text=_("gui", "login", "name"), padding=(4, 0, 4, 4)
+        )
         frame.grid(column=1, row=1, sticky="nsew", padx=2)
         frame.columnconfigure(0, weight=2)
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(4, weight=1)
         ttk.Label(frame, text=_("gui", "login", "labels")).grid(column=0, row=0)
         ttk.Label(frame, textvariable=self._var, justify="center").grid(column=1, row=0)
-        self._login_entry = PlaceholderEntry(frame, placeholder=_("gui", "login", "username"))
+        self._login_entry = PlaceholderEntry(
+            frame, placeholder=_("gui", "login", "username")
+        )
         # self._login_entry.grid(column=0, row=1, columnspan=2)
         self._pass_entry = PlaceholderEntry(
-            frame, placeholder=_("gui", "login", "password"), show='•'
+            frame, placeholder=_("gui", "login", "password"), show="•"
         )
         # self._pass_entry.grid(column=0, row=2, columnspan=2)
-        self._token_entry = PlaceholderEntry(frame, placeholder=_("gui", "login", "twofa_code"))
+        self._token_entry = PlaceholderEntry(
+            frame, placeholder=_("gui", "login", "twofa_code")
+        )
         # self._token_entry.grid(column=0, row=3, columnspan=2)
 
         self._confirm = asyncio.Event()
         self._button = ttk.Button(
-            frame, text=_("gui", "login", "button"), command=self._confirm.set, state="disabled"
+            frame,
+            text=_("gui", "login", "button"),
+            command=self._confirm.set,
+            state="disabled",
         )
         self._button.grid(column=0, row=4, columnspan=2)
         self.update(_("gui", "login", "logged_out"), None)
@@ -529,9 +589,8 @@ class LoginForm:
                 self._token_entry.get().strip(),
             )
             # basic input data validation: 3-25 characters in length, only ascii and underscores
-            if (
-                not 3 <= len(login_data.username) <= 25
-                and re.match(r'^[a-zA-Z0-9_]+$', login_data.username)
+            if not 3 <= len(login_data.username) <= 25 and re.match(
+                r"^[a-zA-Z0-9_]+$", login_data.username
             ):
                 self.clear(login=True)
                 continue
@@ -549,7 +608,10 @@ class LoginForm:
         self._manager.grab_attention(sound=False)
         self._manager.print(_("gui", "login", "request"))
         await self.wait_for_login_press()
-        self._manager.print(f"Enter this code on the Twitch's device activation page: {user_code}")
+        self._manager.print(
+            f"Enter this code on the Twitch's device activation page: {user_code}"
+        )
+        await asyncio.sleep(4)
         webopen("https://www.twitch.tv/activate")
 
     def update(self, status: str, user_id: int | None):
@@ -591,7 +653,9 @@ class CampaignProgress:
                 "game": StringVar(master),  # game name
                 "progress": DoubleVar(master),  # controls the progress bar
                 "percentage": StringVar(master),  # percentage display string
-                "remaining": StringVar(master),  # time remaining string, filled via _update_time
+                "remaining": StringVar(
+                    master
+                ),  # time remaining string, filled via _update_time
             },
             "drop": {
                 "rewards": StringVar(master),  # drop rewards
@@ -610,15 +674,27 @@ class CampaignProgress:
         game_campaign.grid(column=0, row=0, columnspan=2, sticky="nsew")
         game_campaign.columnconfigure(0, weight=1)
         game_campaign.columnconfigure(1, weight=1)
-        ttk.Label(game_campaign, text=_("gui", "progress", "game")).grid(column=0, row=0)
-        ttk.Label(game_campaign, textvariable=self._vars["campaign"]["game"]).grid(column=0, row=1)
-        ttk.Label(game_campaign, text=_("gui", "progress", "campaign")).grid(column=1, row=0)
-        ttk.Label(game_campaign, textvariable=self._vars["campaign"]["name"]).grid(column=1, row=1)
-        ttk.Label(
-            frame, text=_("gui", "progress", "campaign_progress")
-        ).grid(column=0, row=2, rowspan=2)
-        ttk.Label(frame, textvariable=self._vars["campaign"]["percentage"]).grid(column=1, row=2)
-        ttk.Label(frame, textvariable=self._vars["campaign"]["remaining"]).grid(column=1, row=3)
+        ttk.Label(game_campaign, text=_("gui", "progress", "game")).grid(
+            column=0, row=0
+        )
+        ttk.Label(game_campaign, textvariable=self._vars["campaign"]["game"]).grid(
+            column=0, row=1
+        )
+        ttk.Label(game_campaign, text=_("gui", "progress", "campaign")).grid(
+            column=1, row=0
+        )
+        ttk.Label(game_campaign, textvariable=self._vars["campaign"]["name"]).grid(
+            column=1, row=1
+        )
+        ttk.Label(frame, text=_("gui", "progress", "campaign_progress")).grid(
+            column=0, row=2, rowspan=2
+        )
+        ttk.Label(frame, textvariable=self._vars["campaign"]["percentage"]).grid(
+            column=1, row=2
+        )
+        ttk.Label(frame, textvariable=self._vars["campaign"]["remaining"]).grid(
+            column=1, row=3
+        )
         ttk.Progressbar(
             frame,
             mode="determinate",
@@ -626,18 +702,24 @@ class CampaignProgress:
             maximum=1,
             variable=self._vars["campaign"]["progress"],
         ).grid(column=0, row=4, columnspan=2)
-        ttk.Separator(
-            frame, orient="horizontal"
-        ).grid(row=5, columnspan=2, sticky="ew", pady=(4, 0))
-        ttk.Label(frame, text=_("gui", "progress", "drop")).grid(column=0, row=6, columnspan=2)
-        ttk.Label(
-            frame, textvariable=self._vars["drop"]["rewards"]
-        ).grid(column=0, row=7, columnspan=2)
-        ttk.Label(
-            frame, text=_("gui", "progress", "drop_progress")
-        ).grid(column=0, row=8, rowspan=2)
-        ttk.Label(frame, textvariable=self._vars["drop"]["percentage"]).grid(column=1, row=8)
-        ttk.Label(frame, textvariable=self._vars["drop"]["remaining"]).grid(column=1, row=9)
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=5, columnspan=2, sticky="ew", pady=(4, 0)
+        )
+        ttk.Label(frame, text=_("gui", "progress", "drop")).grid(
+            column=0, row=6, columnspan=2
+        )
+        ttk.Label(frame, textvariable=self._vars["drop"]["rewards"]).grid(
+            column=0, row=7, columnspan=2
+        )
+        ttk.Label(frame, text=_("gui", "progress", "drop_progress")).grid(
+            column=0, row=8, rowspan=2
+        )
+        ttk.Label(frame, textvariable=self._vars["drop"]["percentage"]).grid(
+            column=1, row=8
+        )
+        ttk.Label(frame, textvariable=self._vars["drop"]["remaining"]).grid(
+            column=1, row=9
+        )
         ttk.Progressbar(
             frame,
             mode="determinate",
@@ -670,11 +752,15 @@ class CampaignProgress:
         CurrentSeconds.set_current_seconds(dseconds)
         hours, minutes = self._divmod(drop_minutes, seconds)
         drop_vars["remaining"].set(
-            _("gui", "progress", "remaining").format(time=f"{hours:>2}:{minutes:02}:{dseconds:02}")
+            _("gui", "progress", "remaining").format(
+                time=f"{hours:>2}:{minutes:02}:{dseconds:02}"
+            )
         )
         hours, minutes = self._divmod(campaign_minutes, seconds)
         campaign_vars["remaining"].set(
-            _("gui", "progress", "remaining").format(time=f"{hours:>2}:{minutes:02}:{dseconds:02}")
+            _("gui", "progress", "remaining").format(
+                time=f"{hours:>2}:{minutes:02}:{dseconds:02}"
+            )
         )
 
     async def _timer_loop(self):
@@ -689,7 +775,7 @@ class CampaignProgress:
     def start_timer(self):
         self._manager.print(
             f'{_("gui", "progress", "campaign_progress")} {self._drop.current_minutes}/{self._drop.required_minutes} - {self._drop.campaign.game.name}, {self._drop.campaign.name}'
-            )
+        )
         if self._timer_task is None:
             if self._drop is None or self._drop.remaining_minutes <= 0:
                 # if we're starting the timer at 0 drop minutes,
@@ -704,7 +790,12 @@ class CampaignProgress:
             self._timer_task.cancel()
             self._timer_task = None
 
-    def display(self, drop: TimedDrop | None, *, countdown: bool = True, subone: bool = False):
+    def is_counting(self) -> bool:
+        return self._timer_task is not None
+
+    def display(
+        self, drop: TimedDrop | None, *, countdown: bool = True, subone: bool = False
+    ):
         self._drop = drop
         vars_drop = self._vars["drop"]
         vars_campaign = self._vars["campaign"]
@@ -771,8 +862,8 @@ class ConsoleOutput:
 
     def print(self, message: str):
         stamp = datetime.now().strftime("%X")
-        if '\n' in message:
-            message = message.replace('\n', f"\n{stamp}: ")
+        if "\n" in message:
+            message = message.replace("\n", f"\n{stamp}: ")
         self._text.config(state="normal")
         self._text.insert("end", f"{stamp}: {message}\n")
         self._text.see("end")  # scroll to the newly added line
@@ -788,7 +879,9 @@ class _Buttons(TypedDict):
 class ChannelList:
     def __init__(self, manager: GUIManager, master: ttk.Widget):
         self._manager = manager
-        frame = ttk.LabelFrame(master, text=_("gui", "channels", "name"), padding=(4, 0, 4, 4))
+        frame = ttk.LabelFrame(
+            master, text=_("gui", "channels", "name"), padding=(4, 0, 4, 4)
+        )
         frame.grid(column=2, row=1, rowspan=2, sticky="nsew", padx=2)
         # tell master frame that the containing column can expand
         master.columnconfigure(2, weight=1)
@@ -804,7 +897,9 @@ class ChannelList:
                 command=manager._twitch.state_change(State.CHANNEL_SWITCH),
             ),
             "load_points": ttk.Button(
-                buttons_frame, text=_("gui", "channels", "load_points"), command=self._load_points
+                buttons_frame,
+                text=_("gui", "channels", "load_points"),
+                command=self._load_points,
             ),
         }
         buttons_frame.grid(column=0, row=0, columnspan=2)
@@ -824,9 +919,12 @@ class ChannelList:
         table.tag_configure("watching", background="gray70")
         table.bind("<Button-1>", self._disable_column_resize)
         table.bind("<<TreeviewSelect>>", self._selected)
-        self._add_column("#0", '', width=0)
+        self._add_column("#0", "", width=0)
         self._add_column(
-            "channel", _("gui", "channels", "headings", "channel"), width=100, anchor='w'
+            "channel",
+            _("gui", "channels", "headings", "channel"),
+            width=100,
+            anchor="w",
         )
         self._add_column(
             "status",
@@ -840,10 +938,14 @@ class ChannelList:
         self._add_column("game", _("gui", "channels", "headings", "game"), width=50)
         self._add_column("drops", "🎁", width_template="✔")
         self._add_column(
-            "viewers", _("gui", "channels", "headings", "viewers"), width_template="1234567"
+            "viewers",
+            _("gui", "channels", "headings", "viewers"),
+            width_template="1234567",
         )
         self._add_column(
-            "points", _("gui", "channels", "headings", "points"), width_template="1234567"
+            "points",
+            _("gui", "channels", "headings", "points"),
+            width_template="1234567",
         )
         self._add_column("acl_base", "📋", width_template="✔")
         self._channel_map: dict[str, Channel] = {}
@@ -869,12 +971,20 @@ class ChannelList:
                 s_heading = table.heading(s_cid)
                 assert s_heading is not None
                 column_settings[s_cid] = (
-                    s_heading["text"], s_heading["anchor"], s_column["width"], s_column["minwidth"]
+                    s_heading["text"],
+                    s_heading["anchor"],
+                    s_column["width"],
+                    s_column["minwidth"],
                 )
             # ..., then add the column
             table.config(columns=columns + (cid,))
             # ..., and then restore column settings and headings afterwards
-            for s_cid, (s_name, s_anchor, s_width, s_minwidth) in column_settings.items():
+            for s_cid, (
+                s_name,
+                s_anchor,
+                s_width,
+                s_minwidth,
+            ) in column_settings.items():
                 table.heading(s_cid, text=s_name, anchor=s_anchor)
                 table.column(s_cid, minwidth=s_minwidth, width=s_width, stretch=False)
         # set heading and column settings for the new column
@@ -882,7 +992,9 @@ class ChannelList:
             if isinstance(width_template, str):
                 width = self._measure(width_template)
             else:
-                width = max((self._measure(template) for template in width_template), default=20)
+                width = max(
+                    (self._measure(template) for template in width_template), default=20
+                )
             self._const_width.add(cid)
         assert width is not None
         table.heading(cid, text=name, anchor=anchor)
@@ -902,7 +1014,9 @@ class ChannelList:
     def _load_points(self):
         # disable the button afterwards
         self._buttons["load_points"].config(state="disabled")
-        asyncio.gather(*(ch.claim_bonus() for ch in self._manager._twitch.channels.values()))
+        asyncio.gather(
+            *(ch.claim_bonus() for ch in self._manager._twitch.channels.values())
+        )
 
     def _measure(self, text: str) -> int:
         # we need this because columns have 9-10 pixels of padding that cuts text off
@@ -949,11 +1063,11 @@ class ChannelList:
             value = values[cid]
             to_insert.append(value)
             self._adjust_width(cid, value)
-        self._table.insert(parent='', index="end", iid=iid, values=to_insert)
+        self._table.insert(parent="", index="end", iid=iid, values=to_insert)
 
     def clear_watching(self):
         for iid in self._table.tag_has("watching"):
-            self._table.item(iid, tags='')
+            self._table.item(iid, tags="")
 
     def set_watching(self, channel: Channel):
         self.clear_watching()
@@ -970,7 +1084,7 @@ class ChannelList:
         return self._channel_map[selection[0]]
 
     def clear_selection(self):
-        self._table.selection_set('')
+        self._table.selection_set("")
 
     def clear(self):
         iids = self._table.get_children()
@@ -993,15 +1107,15 @@ class ChannelList:
         else:
             status = _("gui", "channels", "offline")
         # game
-        game = str(channel.game or '')
+        game = str(channel.game or "")
         # drops
         drops = "✔" if channel.drops_enabled else "❌"
         # viewers
-        viewers = ''
+        viewers = ""
         if channel.viewers is not None:
             viewers = str(channel.viewers)
         # points
-        points = ''
+        points = ""
         if channel.points is not None:
             points = str(channel.points)
         if iid in self._channel_map:
@@ -1010,7 +1124,7 @@ class ChannelList:
             self._set(iid, "status", status)
             self._set(iid, "viewers", viewers)
             self._set(iid, "acl_base", acl_based)
-            if points != '':  # we still want to display 0
+            if points != "":  # we still want to display 0
                 self._set(iid, "points", points)
         elif add:
             self._channel_map[iid] = channel
@@ -1039,48 +1153,51 @@ class TrayIcon:
     def __init__(self, manager: GUIManager, master: ttk.Widget):
         self._manager = manager
         self.icon = None
-        self.icon_image = Image_module.open(resource_path("pickaxe.ico"))
-        # Anything tray related disabled in this version
-        # self._button = ttk.Button(master, command=self.minimize, text=_("gui", "tray", "minimize"))
-        # self._button.grid(column=0, row=0, sticky="ne")
-        self.always_show_icon = True        # Ensure there is a way to restore the window position, in case it's shown off-screen (e.g. Second monitor)
-        if self.always_show_icon:
-            self._start()
+        self._icon_images: dict[str, Image_module.Image] = {
+            "pickaxe": Image_module.open(resource_path("icons/pickaxe.ico")),
+            "active": Image_module.open(resource_path("icons/active.ico")),
+            "idle": Image_module.open(resource_path("icons/idle.ico")),
+            "error": Image_module.open(resource_path("icons/error.ico")),
+            "maint": Image_module.open(resource_path("icons/maint.ico")),
+        }
+        self._icon_state: str = "pickaxe"
+        self.always_show_icon = True
 
     def __del__(self) -> None:
         self.stop()
-        self.icon_image.close()
+        for icon_image in self._icon_images.values():
+            icon_image.close()
+
+    def _shorten(self, text: str, by_len: int, min_len: int) -> str:
+        if (text_len := len(text)) <= min_len + 3 or by_len <= 0:
+            # cannot shorten
+            return text
+        return text[: -min(by_len + 3, text_len - min_len)] + "..."
 
     def get_title(self, drop: TimedDrop | None) -> str:
         if drop is None:
             return self.TITLE
         campaign = drop.campaign
-        title = (
-            f"{self.TITLE}\n"
-            f"{campaign.game.name}\n"
-            f"{drop.rewards_text()} "
-            f"{drop.progress:.1%} ({campaign.claimed_drops}/{campaign.total_drops})"
-        )
-        if  len(title) > 127:        # ValueError: string too long (x, maximum length 128), but it only shows 127
-            min_length = 30
-            diff = len(title) - 127
-            if (len(drop.rewards_text()) - diff) >= min_length + 1:     # If we can trim the drop name to 20 chars
-                new_length = len(drop.rewards_text()) - diff - 1        # Length - Diff - Ellipsis (…)
-                title = (
-                    f"{self.TITLE}\n"
-                    f"{campaign.game.name}\n"
-                    f"{drop.rewards_text()[:new_length]}… "
-                    f"{drop.progress:.1%} ({campaign.claimed_drops}/{campaign.total_drops})"
-                )
-            else:                                                                                               # Trimming both
-                new_length = len(campaign.game.name) - (diff - len(drop.rewards_text()) + min_length + 1) - 1   # Campaign name - (Remaining diff from trimmed drop name) - Ellipsis
-                title = (
-                    f"{self.TITLE}\n"
-                    f"{campaign.game.name[:new_length]}…\n"
-                    f"{drop.rewards_text()[:min_length]}… "
-                    f"{drop.progress:.1%} ({campaign.claimed_drops}/{campaign.total_drops})"
-                )
-        return title
+        title_parts: list[str] = [
+            f"{self.TITLE}\n",
+            f"{campaign.game.name}\n",
+            drop.rewards_text(),
+            f" {drop.progress:.1%} ({campaign.claimed_drops}/{campaign.total_drops})",
+        ]
+        min_len: int = 30
+        max_len: int = 127
+        missing_len = len("".join(title_parts)) - max_len
+        if missing_len > 0:
+            # try shortening the reward text
+            title_parts[2] = self._shorten(title_parts[2], missing_len, min_len)
+            missing_len = len("".join(title_parts)) - max_len
+        if missing_len > 0:
+            # try shortening the game name
+            title_parts[1] = self._shorten(title_parts[1], missing_len, min_len)
+            missing_len = len("".join(title_parts)) - max_len
+        if missing_len > 0:
+            raise MinerException(f"Title couldn't be shortened: {''.join(title_parts)}")
+        return "".join(title_parts)
 
     def _start(self):
         loop = asyncio.get_running_loop()
@@ -1091,16 +1208,19 @@ class TrayIcon:
         def bridge(func):
             return lambda: loop.call_soon_threadsafe(func)
 
-        # menu = pystray.Menu(
-        #     pystray.MenuItem(_("gui", "tray", "show"), bridge(self.restore), default=True),
-        #     pystray.Menu.SEPARATOR,
-        #     pystray.MenuItem(_("gui", "tray", "quit"), bridge(self.quit)),
-        #     pystray.MenuItem(f'{_("gui", "tray", "show")} ({_("gui", "inventory", "filter", "refresh")})', bridge(self.restore_position)),
-        # )
-        # if self.always_show_icon:
-        #     self.icon = pystray.Icon("twitch_miner", self.icon_image, self.get_title(None), menu)
-        # else:
-        #     self.icon = pystray.Icon("twitch_miner", self.icon_image, self.get_title(drop), menu)
+        menu = pystray.Menu(
+            pystray.MenuItem(
+                _("gui", "tray", "show"), bridge(self.restore), default=True
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(_("gui", "tray", "quit"), bridge(self.quit)),
+        )
+        self.icon = pystray.Icon(
+            "twitch_miner",
+            self._icon_images[self._icon_state],
+            self.get_title(drop),
+            menu,
+        )
         # self.icon.run_detached()
         # loop.run_in_executor(None, self.icon.run)
 
@@ -1156,6 +1276,13 @@ class TrayIcon:
         if self.icon is not None:
             self.icon.title = self.get_title(drop)
 
+    def change_icon(self, state: str):
+        if state not in self._icon_images:
+            raise ValueError("Invalid icon state")
+        self._icon_state = state
+        if self.icon is not None:
+            self.icon.icon = self._icon_images[state]
+
 
 class Notebook:
     def __init__(self, manager: GUIManager, master: ttk.Widget):
@@ -1190,7 +1317,9 @@ class InventoryOverview:
         self._cache: ImageCache = manager._cache
         self._settings: Settings = manager._twitch.settings
         self._filters = {
-            "not_linked": IntVar(master, 1),
+            "not_linked": IntVar(
+                master, self._settings.priority_mode is PriorityMode.PRIORITY_ONLY
+            ),
             "upcoming": IntVar(master, 1),
             "expired": IntVar(master, 0),
             "excluded": IntVar(master, 0),
@@ -1204,51 +1333,55 @@ class InventoryOverview:
         LABEL_SPACING = 20
         filter_frame.grid(column=0, row=0, columnspan=2, sticky="nsew")
         ttk.Label(
-            filter_frame, text=_("gui", "inventory", "filter", "show"), padding=(0, 0, 10, 0)
+            filter_frame,
+            text=_("gui", "inventory", "filter", "show"),
+            padding=(0, 0, 10, 0),
         ).grid(column=0, row=0)
         icolumn = 0
-        ttk.Checkbutton(
-            filter_frame, variable=self._filters["not_linked"]
-        ).grid(column=(icolumn := icolumn + 1), row=0)
+        ttk.Checkbutton(filter_frame, variable=self._filters["not_linked"]).grid(
+            column=(icolumn := icolumn + 1), row=0
+        )
         ttk.Label(
             filter_frame,
             text=_("gui", "inventory", "filter", "not_linked"),
             padding=(0, 0, LABEL_SPACING, 0),
         ).grid(column=(icolumn := icolumn + 1), row=0)
-        ttk.Checkbutton(
-            filter_frame, variable=self._filters["upcoming"]
-        ).grid(column=(icolumn := icolumn + 1), row=0)
+        ttk.Checkbutton(filter_frame, variable=self._filters["upcoming"]).grid(
+            column=(icolumn := icolumn + 1), row=0
+        )
         ttk.Label(
             filter_frame,
             text=_("gui", "inventory", "filter", "upcoming"),
             padding=(0, 0, LABEL_SPACING, 0),
         ).grid(column=(icolumn := icolumn + 1), row=0)
-        ttk.Checkbutton(
-            filter_frame, variable=self._filters["expired"]
-        ).grid(column=(icolumn := icolumn + 1), row=0)
+        ttk.Checkbutton(filter_frame, variable=self._filters["expired"]).grid(
+            column=(icolumn := icolumn + 1), row=0
+        )
         ttk.Label(
             filter_frame,
             text=_("gui", "inventory", "filter", "expired"),
             padding=(0, 0, LABEL_SPACING, 0),
         ).grid(column=(icolumn := icolumn + 1), row=0)
-        ttk.Checkbutton(
-            filter_frame, variable=self._filters["excluded"]
-        ).grid(column=(icolumn := icolumn + 1), row=0)
+        ttk.Checkbutton(filter_frame, variable=self._filters["excluded"]).grid(
+            column=(icolumn := icolumn + 1), row=0
+        )
         ttk.Label(
             filter_frame,
             text=_("gui", "inventory", "filter", "excluded"),
             padding=(0, 0, LABEL_SPACING, 0),
         ).grid(column=(icolumn := icolumn + 1), row=0)
-        ttk.Checkbutton(
-            filter_frame, variable=self._filters["finished"]
-        ).grid(column=(icolumn := icolumn + 1), row=0)
+        ttk.Checkbutton(filter_frame, variable=self._filters["finished"]).grid(
+            column=(icolumn := icolumn + 1), row=0
+        )
         ttk.Label(
             filter_frame,
             text=_("gui", "inventory", "filter", "finished"),
             padding=(0, 0, LABEL_SPACING, 0),
         ).grid(column=(icolumn := icolumn + 1), row=0)
         ttk.Button(
-            filter_frame, text=_("gui", "inventory", "filter", "refresh"), command=self.refresh
+            filter_frame,
+            text=_("gui", "inventory", "filter", "refresh"),
+            command=self.refresh,
         ).grid(column=(icolumn := icolumn + 1), row=0)
         # Inventory view
         self._canvas = tk.Canvas(master, scrollregion=(0, 0, 0, 0))
@@ -1263,7 +1396,8 @@ class InventoryOverview:
         self._canvas.bind("<Configure>", self._canvas_update)
         self._main_frame = ttk.Frame(self._canvas)
         self._canvas.bind(
-            "<Enter>", lambda e: self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+            "<Enter>",
+            lambda e: self._canvas.bind_all("<MouseWheel>", self._on_mousewheel),
         )
         self._canvas.bind("<Leave>", lambda e: self._canvas.unbind_all("<MouseWheel>"))
         self._canvas.create_window(0, 0, anchor="nw", window=self._main_frame)
@@ -1278,14 +1412,23 @@ class InventoryOverview:
         excluded = bool(self._filters["excluded"].get())
         upcoming = bool(self._filters["upcoming"].get())
         finished = bool(self._filters["finished"].get())
-        priority_only = self._settings.priority_only
+        priority_only = self._settings.priority_mode is PriorityMode.PRIORITY_ONLY
         if (
-            (not_linked or campaign.linked)
-            and (campaign.active or upcoming and campaign.upcoming or expired and campaign.expired)
+            campaign.remaining_minutes > 0  # don't show sub-only campaigns
+            and (not_linked or campaign.linked)
             and (
-                excluded or (
+                campaign.active
+                or upcoming
+                and campaign.upcoming
+                or expired
+                and campaign.expired
+            )
+            and (
+                excluded
+                or (
                     campaign.game.name not in self._settings.exclude
-                    and not priority_only or campaign.game.name in self._settings.priority
+                    and not priority_only
+                    or campaign.game.name in self._settings.priority
                 )
             )
             and (finished or not campaign.finished)
@@ -1298,6 +1441,18 @@ class InventoryOverview:
         if self._manager.tabs.current_tab() == 1:
             # refresh only if we're switching to the tab
             self.refresh()
+
+    def get_status(self, campaign: DropsCampaign) -> tuple[str, str]:
+        if campaign.active:
+            status_text: str = _("gui", "inventory", "status", "active")
+            status_color: str = "green"
+        elif campaign.upcoming:
+            status_text = _("gui", "inventory", "status", "upcoming")
+            status_color = "goldenrod"
+        else:
+            status_text = _("gui", "inventory", "status", "expired")
+            status_color = "red"
+        return (status_text, status_color)
 
     def refresh(self):
         for campaign in self._campaigns:
@@ -1323,21 +1478,30 @@ class InventoryOverview:
         scroll(delta, "units")
 
     async def add_campaign(self, campaign: DropsCampaign) -> None:
-        campaign_frame = ttk.Frame(self._main_frame, relief="ridge", borderwidth=1, padding=4)
+        campaign_frame = ttk.Frame(
+            self._main_frame, relief="ridge", borderwidth=1, padding=4
+        )
         campaign_frame.grid(column=0, row=len(self._campaigns), sticky="nsew", pady=3)
         campaign_frame.rowconfigure(4, weight=1)
         campaign_frame.columnconfigure(1, weight=1)
         campaign_frame.columnconfigure(3, weight=10000)
         # Name
-        ttk.Label(
-            campaign_frame, text=campaign.name, takefocus=False, width=45
-        ).grid(column=0, row=0, columnspan=2, sticky="w")
+        ttk.Label(campaign_frame, text=campaign.name, takefocus=False, width=45).grid(
+            column=0, row=0, columnspan=2, sticky="w"
+        )
         # Status
         status_text, status_color = self.get_status(campaign)
         status_label = ttk.Label(
             campaign_frame, text=status_text, takefocus=False, foreground=status_color
         )
         status_label.grid(column=1, row=1, sticky="w", padx=4)
+        # NOTE: We have to save the campaign's frame and status before any awaits happen,
+        # otherwise the len(self._campaigns) call may overwrite an existing frame,
+        # if the campaigns are added concurrently.
+        self._campaigns[campaign] = {
+            "frame": campaign_frame,
+            "status": status_label,
+        }
         # Starts / Ends
         MouseOverLabel(
             campaign_frame,
@@ -1353,7 +1517,7 @@ class InventoryOverview:
         # Linking status
         if campaign.linked:
             link_kwargs = {
-                "style": '',
+                "style": "",
                 "text": _("gui", "inventory", "status", "linked"),
                 "foreground": "green",
             }
@@ -1373,9 +1537,9 @@ class InventoryOverview:
         acl = campaign.allowed_channels
         if acl:
             if len(acl) <= 5:
-                allowed_text: str = '\n'.join(ch.name for ch in acl)
+                allowed_text: str = "\n".join(ch.name for ch in acl)
             else:
-                allowed_text = '\n'.join(ch.name for ch in acl[:4])
+                allowed_text = "\n".join(ch.name for ch in acl[:4])
                 allowed_text += (
                     f"\n{_('gui', 'inventory', 'and_more').format(amount=len(acl) - 4)}"
                 )
@@ -1388,11 +1552,13 @@ class InventoryOverview:
         ).grid(column=1, row=4, sticky="nw", padx=4)
         # Image
         campaign_image = await self._cache.get(campaign.image_url, size=(108, 144))
-        ttk.Label(campaign_frame, image=campaign_image).grid(column=0, row=1, rowspan=4)
+        ttk.Label(campaign_frame, image=campaign_image).grid(  # type: ignore[arg-type]
+            column=0, row=1, rowspan=4
+        )
         # Drops separator
-        ttk.Separator(
-            campaign_frame, orient="vertical", takefocus=False
-        ).grid(column=2, row=0, rowspan=5, sticky="ns")
+        ttk.Separator(campaign_frame, orient="vertical", takefocus=False).grid(
+            column=2, row=0, rowspan=5, sticky="ns"
+        )
         # Drops display
         drops_row = ttk.Frame(campaign_frame)
         drops_row.grid(column=3, row=0, rowspan=5, sticky="nsew", padx=4)
@@ -1403,19 +1569,23 @@ class InventoryOverview:
             benefits_frame = ttk.Frame(drop_frame)
             benefits_frame.grid(column=0, row=0)
             benefit_images: list[PhotoImage] = await asyncio.gather(
-                *(self._cache.get(benefit.image_url, (80, 80)) for benefit in drop.benefits)
+                *(
+                    self._cache.get(benefit.image_url, (80, 80))
+                    for benefit in drop.benefits
+                )
             )
-            for i, benefit, image in zip(range(len(drop.benefits)), drop.benefits, benefit_images):
+            for i, benefit, image in zip(
+                range(len(drop.benefits)), drop.benefits, benefit_images
+            ):
                 ttk.Label(
-                    benefits_frame, text=benefit.name, image=image, compound="bottom"
+                    benefits_frame,
+                    text=benefit.name,
+                    image=image,  # type: ignore[arg-type]
+                    compound="bottom",
                 ).grid(column=i, row=0, padx=5)
             self._drops[drop.id] = label = MouseOverLabel(drop_frame)
             self.update_progress(drop, label)
             label.grid(column=0, row=1)
-        self._campaigns[campaign] = {
-            "frame": campaign_frame,
-            "status": status_label,
-        }
         if self._manager.tabs.current_tab() == 1:
             self._update_visibility(campaign)
             self._canvas_update()
@@ -1426,24 +1596,12 @@ class InventoryOverview:
         self._drops.clear()
         self._campaigns.clear()
 
-    def get_status(self, campaign: DropsCampaign) -> tuple[str, str]:
-        if campaign.active:
-            status_text: str = _("gui", "inventory", "status", "active")
-            status_color: str = "green"
-        elif campaign.upcoming:
-            status_text = _("gui", "inventory", "status", "upcoming")
-            status_color = "goldenrod"
-        else:
-            status_text = _("gui", "inventory", "status", "expired")
-            status_color = "red"
-        return (status_text, status_color)
-
     def update_progress(self, drop: TimedDrop, label: MouseOverLabel) -> None:
         # Returns: main text, alt text, text color
-        alt_text: str = ''
+        alt_text: str = ""
         progress_text: str
         reverse: bool = False
-        progress_color: str = ''
+        progress_color: str = ""
         if drop.is_claimed:
             progress_color = "green"
             progress_text = _("gui", "inventory", "status", "claimed")
@@ -1472,7 +1630,10 @@ class InventoryOverview:
                 )
                 reverse = True
         label.config(
-            text=progress_text, alt_text=alt_text, reverse=reverse, foreground=progress_color
+            text=progress_text,
+            alt_text=alt_text,
+            reverse=reverse,
+            foreground=progress_color,
         )
 
     def update_drop(self, drop: TimedDrop) -> None:
@@ -1499,31 +1660,49 @@ class _SettingsVars(TypedDict):
     proxy: StringVar
     dark_theme: IntVar
     autostart: IntVar
-    priority_only: IntVar
+    language: StringVar
+    priority_mode: StringVar
     prioritize_by_ending_soonest: IntVar
     tray_notifications: IntVar
-    window_position: StringVar
 
 
 class SettingsPanel:
     AUTOSTART_NAME: str = "TwitchDropsMiner"
     AUTOSTART_KEY: str = "HKCU/Software/Microsoft/Windows/CurrentVersion/Run"
+    PRIORITY_MODES: dict[PriorityMode, str] = {
+        PriorityMode.PRIORITY_ONLY: _(
+            "gui", "settings", "priority_modes", "priority_only"
+        ),
+        PriorityMode.ENDING_SOONEST: _(
+            "gui", "settings", "priority_modes", "ending_soonest"
+        ),
+        PriorityMode.LOW_AVBL_FIRST: _(
+            "gui", "settings", "priority_modes", "low_availability"
+        ),
+    }
 
     def __init__(self, manager: GUIManager, master: ttk.Widget, root: tk.Tk):
         self._manager = manager
         self._root = root
         self._twitch = manager._twitch
         self._settings: Settings = manager._twitch.settings
+        priority_mode = self._settings.priority_mode
+        if priority_mode not in self.PRIORITY_MODES:
+            priority_mode = PriorityMode.PRIORITY_ONLY
+            self._settings.priority_mode = priority_mode
         self._vars: _SettingsVars = {
+            "autostart": IntVar(master, 0),
+            "language": StringVar(master, _.current),
             "proxy": StringVar(master, str(self._settings.proxy)),
             "tray": IntVar(master, self._settings.autostart_tray),
             "dark_theme": IntVar(master, self._settings.dark_theme),
-            "autostart": IntVar(master, self._settings.autostart),
-            "priority_only": IntVar(master, self._settings.priority_only),
-            "prioritize_by_ending_soonest": IntVar(master, self._settings.prioritize_by_ending_soonest),
+            "priority_mode": StringVar(master, self.PRIORITY_MODES[priority_mode]),
+            "prioritize_by_ending_soonest": IntVar(
+                master, self._settings.prioritize_by_ending_soonest
+            ),
             "tray_notifications": IntVar(master, self._settings.tray_notifications),
-            "window_position": IntVar(master, self._settings.window_position),
         }
+        self._game_names: set[str] = set()
         master.rowconfigure(0, weight=1)
         master.columnconfigure(0, weight=1)
         # use a frame to center the content within the tab
@@ -1531,7 +1710,9 @@ class SettingsPanel:
         center_frame.grid(column=0, row=0)
         # General section
         general_frame = ttk.LabelFrame(
-            center_frame, padding=(4, 0, 4, 4), text=_("gui", "settings", "general", "name")
+            center_frame,
+            padding=(4, 0, 4, 4),
+            text=_("gui", "settings", "general", "name"),
         )
         general_frame.grid(column=0, row=0, sticky="nsew")
         # use another frame to center the options within the section
@@ -1540,10 +1721,13 @@ class SettingsPanel:
         general_frame.columnconfigure(0, weight=1)
         center_frame2 = ttk.Frame(general_frame)
         center_frame2.grid(column=0, row=0)
+
         # language frame
         language_frame = ttk.Frame(center_frame2)
         language_frame.grid(column=0, row=0)
-        ttk.Label(language_frame, text="Language 🌐 (requires restart): ").grid(column=0, row=0)
+        ttk.Label(language_frame, text="Language 🌐 (requires restart): ").grid(
+            column=0, row=0
+        )
         self._select_menu = SelectMenu(
             language_frame,
             default=_.current,
@@ -1551,6 +1735,16 @@ class SettingsPanel:
             command=lambda lang: setattr(self._settings, "language", lang),
         )
         self._select_menu.grid(column=1, row=0)
+
+        SelectCombobox(
+            language_frame,
+            values=list(_.languages),
+            textvariable=self._vars["language"],
+            command=lambda e: setattr(
+                self._settings, "language", self._vars["language"].get()
+            ),
+        ).grid(column=1, row=0)
+
         # checkboxes frame
         checkboxes_frame = ttk.Frame(center_frame2)
         checkboxes_frame.grid(column=0, row=1)
@@ -1558,7 +1752,9 @@ class SettingsPanel:
             checkboxes_frame, text=_("gui", "settings", "general", "dark_theme")
         ).grid(column=0, row=(irow := 0), sticky="e")
         ttk.Checkbutton(
-            checkboxes_frame, variable=self._vars["dark_theme"], command=self.change_theme
+            checkboxes_frame,
+            variable=self._vars["dark_theme"],
+            command=self.change_theme,
         ).grid(column=1, row=irow, sticky="w")
         # Anything tray related disabled in this version
         # ttk.Label(
@@ -1582,21 +1778,31 @@ class SettingsPanel:
         #     command=self.update_notifications,
         # ).grid(column=1, row=irow, sticky="w")
         ttk.Label(
-            checkboxes_frame, text=_("gui", "settings", "general", "priority_only")
+            checkboxes_frame,
+            text=_("gui", "settings", "general", "prioritize_by_ending_soonest"),
         ).grid(column=0, row=(irow := irow + 1), sticky="e")
         ttk.Checkbutton(
-            checkboxes_frame, variable=self._vars["priority_only"], command=self.priority_only
+            checkboxes_frame,
+            variable=self._vars["prioritize_by_ending_soonest"],
+            command=self.prioritize_by_ending_soonest,
         ).grid(column=1, row=irow, sticky="w")
+
         ttk.Label(
-            checkboxes_frame, text=_("gui", "settings", "general", "prioritize_by_ending_soonest")
+            checkboxes_frame, text=_("gui", "settings", "general", "priority_mode")
         ).grid(column=0, row=(irow := irow + 1), sticky="e")
-        ttk.Checkbutton(
-            checkboxes_frame, variable=self._vars["prioritize_by_ending_soonest"], command=self.prioritize_by_ending_soonest
+        SelectCombobox(
+            checkboxes_frame,
+            command=self.priority_mode,
+            textvariable=self._vars["priority_mode"],
+            values=list(self.PRIORITY_MODES.values()),
         ).grid(column=1, row=irow, sticky="w")
+
         # proxy frame
         proxy_frame = ttk.Frame(center_frame2)
         proxy_frame.grid(column=0, row=2)
-        ttk.Label(proxy_frame, text=_("gui", "settings", "general", "proxy")).grid(column=0, row=0)
+        ttk.Label(proxy_frame, text=_("gui", "settings", "general", "proxy")).grid(
+            column=0, row=0
+        )
         self._proxy = PlaceholderEntry(
             proxy_frame,
             width=37,
@@ -1605,7 +1811,9 @@ class SettingsPanel:
             textvariable=self._vars["proxy"],
             placeholder="http://username:password@address:port",
         )
-        self._proxy.config(validatecommand=partial(proxy_validate, self._proxy, self._settings))
+        self._proxy.config(
+            validatecommand=partial(proxy_validate, self._proxy, self._settings)
+        )
         self._proxy.grid(column=0, row=1)
         # Priority section
         priority_frame = ttk.LabelFrame(
@@ -1618,7 +1826,11 @@ class SettingsPanel:
         self._priority_entry.grid(column=0, row=0, sticky="ew")
         priority_frame.columnconfigure(0, weight=1)
         ttk.Button(
-            priority_frame, text="+", command=self.priority_add, width=2, style="Large.TButton"
+            priority_frame,
+            text="➕",
+            command=self.priority_add,
+            width=3,
+            style="Large.TButton",
         ).grid(column=1, row=0)
         self._priority_list = PaddedListbox(
             priority_frame,
@@ -1637,7 +1849,7 @@ class SettingsPanel:
             text="▲",
             style="Large.TButton",
             command=partial(self.priority_move, True),
-        ).grid(column=1, row=1, sticky="ns")
+        ).grid(column=1, row=1, sticky="nsew")
         priority_frame.rowconfigure(1, weight=1)
         ttk.Button(
             priority_frame,
@@ -1645,10 +1857,14 @@ class SettingsPanel:
             text="▼",
             style="Large.TButton",
             command=partial(self.priority_move, False),
-        ).grid(column=1, row=2, sticky="ns")
+        ).grid(column=1, row=2, sticky="nsew")
         priority_frame.rowconfigure(2, weight=1)
         ttk.Button(
-            priority_frame, text="❌", command=self.priority_delete, width=2, style="Large.TButton"
+            priority_frame,
+            text="❌",
+            command=self.priority_delete,
+            width=3,
+            style="Large.TButton",
         ).grid(column=1, row=3, sticky="ns")
         priority_frame.rowconfigure(3, weight=1)
         # Exclude section
@@ -1661,7 +1877,11 @@ class SettingsPanel:
         )
         self._exclude_entry.grid(column=0, row=0, sticky="ew")
         ttk.Button(
-            exclude_frame, text="+", command=self.exclude_add, width=2, style="Large.TButton"
+            exclude_frame,
+            text="➕",
+            command=self.exclude_add,
+            width=3,
+            style="Large.TButton",
         ).grid(column=1, row=0)
         self._exclude_list = PaddedListbox(
             exclude_frame,
@@ -1677,17 +1897,25 @@ class SettingsPanel:
         # insert them alphabetically
         self._exclude_list.insert("end", *sorted(self._settings.exclude))
         ttk.Button(
-            exclude_frame, text="❌", command=self.exclude_delete, width=2, style="Large.TButton"
+            exclude_frame,
+            text="❌",
+            command=self.exclude_delete,
+            width=3,
+            style="Large.TButton",
         ).grid(column=0, row=2, columnspan=2, sticky="ew")
         # Reload button
         reload_frame = ttk.Frame(center_frame)
         reload_frame.grid(column=0, row=1, columnspan=3, pady=4)
-        ttk.Label(reload_frame, text=_("gui", "settings", "reload_text")).grid(column=0, row=0)
+        ttk.Label(reload_frame, text=_("gui", "settings", "reload_text")).grid(
+            column=0, row=0
+        )
         ttk.Button(
             reload_frame,
             text=_("gui", "settings", "reload"),
             command=self._twitch.state_change(State.INVENTORY_FETCH),
         ).grid(column=1, row=0)
+
+        self._vars["autostart"].set(self._query_autostart())
 
     def clear_selection(self) -> None:
         self._priority_list.selection_clear(0, "end")
@@ -1696,49 +1924,78 @@ class SettingsPanel:
     def update_notifications(self) -> None:
         self._settings.tray_notifications = bool(self._vars["tray_notifications"].get())
 
-    def _get_autostart_path(self, tray: bool) -> str:
-        self_path = f'"{SELF_PATH.resolve()!s}"'
-        if tray:
-            self_path += " --tray"
-        return self_path
+    def _get_self_path(self) -> str:
+        # NOTE: we need double quotes in case the path contains spaces
+        return f'"{SELF_PATH.resolve()!s}"'
+
+    def _get_autostart_path(self) -> str:
+        flags: list[str] = [""]  # this will add a space between self path and flags
+        # if applicable, include the current logging level as well
+        for lvl_idx, lvl_value in LOGGING_LEVELS.items():
+            if lvl_value == self._settings.logging_level:
+                if lvl_idx > 0:
+                    flags.append(f"-{'v' * lvl_idx}")
+                break
+        if self._vars["tray"].get():
+            flags.append("--tray")
+        return self._get_self_path() + " ".join(flags)
+
+    def _get_linux_autostart_filepath(self) -> Path:
+        autostart_folder: Path = Path("~/.config/autostart").expanduser()
+        if (config_home := os.environ.get("XDG_CONFIG_HOME")) is not None:
+            config_autostart: Path = Path(config_home, "autostart").expanduser()
+            if config_autostart.exists():
+                autostart_folder = config_autostart
+        return autostart_folder / f"{self.AUTOSTART_NAME}.desktop"
+
+    def _query_autostart(self) -> bool:
+        if sys.platform == "win32":
+            with RegistryKey(self.AUTOSTART_KEY, read_only=True) as key:
+                try:
+                    value_type, value = key.get(self.AUTOSTART_NAME)
+                except ValueNotFound:
+                    return False
+                # TODO: Consider deleting the old value to avoid autostart errors
+                return value_type is ValueType.REG_SZ and self._get_self_path() in value
+        elif sys.platform == "linux":
+            autostart_file: Path = self._get_linux_autostart_filepath()
+            if not autostart_file.exists():
+                return False
+            with autostart_file.open("r", encoding="utf8") as file:
+                # TODO: Consider deleting the old file to avoid autostart errors
+                return self._get_self_path() not in file.read()
 
     def change_theme(self):
         self._settings.dark_theme = bool(self._vars["dark_theme"].get())
         if self._settings.dark_theme:
             set_theme(self._root, self._manager, "dark")
         else:
-            set_theme(self._root, self._manager,  "light")
+            set_theme(self._root, self._manager, "light")
 
     def update_autostart(self) -> None:
         enabled = bool(self._vars["autostart"].get())
-        tray = bool(self._vars["tray"].get())
-        self._settings.autostart = enabled
-        self._settings.autostart_tray = tray
+        self._settings.autostart_tray = bool(self._vars["tray"].get())
         if sys.platform == "win32":
             if enabled:
-                # NOTE: we need double quotes in case the path contains spaces
-                autostart_path = self._get_autostart_path(tray)
                 with RegistryKey(self.AUTOSTART_KEY) as key:
-                    key.set(self.AUTOSTART_NAME, ValueType.REG_SZ, autostart_path)
+                    key.set(
+                        self.AUTOSTART_NAME,
+                        ValueType.REG_SZ,
+                        self._get_autostart_path(),
+                    )
             else:
                 with RegistryKey(self.AUTOSTART_KEY) as key:
                     key.delete(self.AUTOSTART_NAME, silent=True)
         elif sys.platform == "linux":
-            autostart_folder: Path = Path("~/.config/autostart").expanduser()
-            if (config_home := os.environ.get("XDG_CONFIG_HOME")) is not None:
-                config_autostart: Path = Path(config_home, "autostart").expanduser()
-                if config_autostart.exists():
-                    autostart_folder = config_autostart
-            autostart_file: Path = autostart_folder / f"{self.AUTOSTART_NAME}.desktop"
+            autostart_file: Path = self._get_linux_autostart_filepath()
             if enabled:
-                autostart_path = self._get_autostart_path(tray)
-                file_contents = dedent(
+                file_contents: str = dedent(
                     f"""
                     [Desktop Entry]
                     Type=Application
                     Name=Twitch Drops Miner
                     Description=Mine timed drops on Twitch
-                    Exec=sh -c '{autostart_path}'
+                    Exec=sh -c '{self._get_autostart_path()}'
                     """
                 )
                 with autostart_file.open("w", encoding="utf8") as file:
@@ -1746,17 +2003,20 @@ class SettingsPanel:
             else:
                 autostart_file.unlink(missing_ok=True)
 
-    def set_games(self, games: abc.Iterable[Game]) -> None:
-        games_list = sorted(map(str, games))
-        self._exclude_entry.config(values=games_list)
-        self._priority_entry.config(values=games_list)
+    def update_excluded_choices(self) -> None:
+        self._exclude_entry.config(
+            values=sorted(self._game_names.difference(self._settings.exclude))
+        )
 
-    def priorities(self) -> dict[str, int]:
-        # NOTE: we shift the indexes so that 0 can be used as the default one
-        size = self._priority_list.size()
-        return {
-            game_name: size - i for i, game_name in enumerate(self._priority_list.get(0, "end"))
-        }
+    def update_priority_choices(self) -> None:
+        self._priority_entry.config(
+            values=sorted(self._game_names.difference(self._settings.priority))
+        )
+
+    def set_games(self, games: set[Game]) -> None:
+        self._game_names.update(game.name for game in games)
+        self.update_excluded_choices()
+        self.update_priority_choices()
 
     def priority_add(self) -> None:
         game_name: str = self._priority_entry.get()
@@ -1773,6 +2033,7 @@ class SettingsPanel:
             self._priority_list.see("end")
             self._settings.priority.append(game_name)
             self._settings.alter()
+            self.update_priority_choices()
         else:
             # already there, set the selection on it
             self._priority_list.selection_set(existing_idx)
@@ -1808,12 +2069,19 @@ class SettingsPanel:
         self._priority_list.delete(idx)
         del self._settings.priority[idx]
         self._settings.alter()
+        self.update_priority_choices()
 
-    def priority_only(self) -> None:
-        self._settings.priority_only = bool(self._vars["priority_only"].get())
+    def priority_mode(self, event: tk.Event[ttk.Combobox]) -> None:
+        mode_name: str = self._vars["priority_mode"].get()
+        for value, name in self.PRIORITY_MODES.items():
+            if mode_name == name:
+                self._settings.priority_mode = value
+                break
 
     def prioritize_by_ending_soonest(self) -> None:
-        self._settings.prioritize_by_ending_soonest = bool(self._vars["prioritize_by_ending_soonest"].get())
+        self._settings.prioritize_by_ending_soonest = bool(
+            self._vars["prioritize_by_ending_soonest"].get()
+        )
 
     def exclude_add(self) -> None:
         game_name: str = self._exclude_entry.get()
@@ -1821,10 +2089,10 @@ class SettingsPanel:
             # prevent adding empty strings
             return
         self._exclude_entry.clear()
-        exclude = self._settings.exclude
-        if game_name not in exclude:
-            exclude.add(game_name)
+        if game_name not in self._settings.exclude:
+            self._settings.exclude.add(game_name)
             self._settings.alter()
+            self.update_excluded_choices()
             # insert it alphabetically
             for i, item in enumerate(self._exclude_list.get(0, "end")):
                 if game_name < item:
@@ -1853,9 +2121,10 @@ class SettingsPanel:
         idx: int = selection[0]
         item: str = self._exclude_list.get(idx)
         if item in self._settings.exclude:
+            self._exclude_list.delete(idx)
             self._settings.exclude.discard(item)
             self._settings.alter()
-            self._exclude_list.delete(idx)
+            self.update_excluded_choices()
 
 
 class HelpTab:
@@ -1874,24 +2143,28 @@ class HelpTab:
         about.grid(column=0, row=(irow := irow + 1), sticky="nsew", padx=2)
         about.columnconfigure(2, weight=1)
         # About - created by
-        ttk.Label(
-            about, text="Application created by: ", anchor="e"
-        ).grid(column=0, row=0, sticky="nsew")
-        LinkLabel(
-            about, link="https://github.com/DevilXD", text="DevilXD"
-        ).grid(column=1, row=0, sticky="nsew")
+        ttk.Label(about, text="Application created by: ", anchor="e").grid(
+            column=0, row=0, sticky="nsew"
+        )
+        LinkLabel(about, link="https://github.com/DevilXD", text="DevilXD").grid(
+            column=1, row=0, sticky="nsew"
+        )
         # About - repo link
-        ttk.Label(about, text="Repository: ", anchor="e").grid(column=0, row=1, sticky="nsew")
+        ttk.Label(about, text="Repository: ", anchor="e").grid(
+            column=0, row=1, sticky="nsew"
+        )
         LinkLabel(
             about,
             link="https://github.com/DevilXD/TwitchDropsMiner",
             text="https://github.com/DevilXD/TwitchDropsMiner",
         ).grid(column=1, row=1, sticky="nsew")
         # About - donate
-        ttk.Separator(
-            about, orient="horizontal"
-        ).grid(column=0, row=2, columnspan=3, sticky="nsew")
-        ttk.Label(about, text="Donate: ", anchor="e").grid(column=0, row=3, sticky="nsew")
+        ttk.Separator(about, orient="horizontal").grid(
+            column=0, row=2, columnspan=3, sticky="nsew"
+        )
+        ttk.Label(about, text="Donate: ", anchor="e").grid(
+            column=0, row=3, sticky="nsew"
+        )
         LinkLabel(
             about,
             link="https://www.buymeacoffee.com/DevilXD",
@@ -1922,14 +2195,18 @@ class HelpTab:
         )
         howitworks.grid(column=0, row=(irow := irow + 1), sticky="nsew", padx=2)
         ttk.Label(
-            howitworks, text=_("gui", "help", "how_it_works_text"), wraplength=self.WIDTH
+            howitworks,
+            text=_("gui", "help", "how_it_works_text"),
+            wraplength=self.WIDTH,
         ).grid(sticky="nsew")
         getstarted = ttk.LabelFrame(
             center_frame, padding=(4, 0, 4, 4), text=_("gui", "help", "getting_started")
         )
         getstarted.grid(column=0, row=(irow := irow + 1), sticky="nsew", padx=2)
         ttk.Label(
-            getstarted, text=_("gui", "help", "getting_started_text"), wraplength=self.WIDTH
+            getstarted,
+            text=_("gui", "help", "getting_started_text"),
+            wraplength=self.WIDTH,
         ).grid(sticky="nsew")
 
 
@@ -1947,14 +2224,11 @@ class GUIManager:
         # withdraw immediately to prevent the window from flashing
         self._root.withdraw()
         # root.resizable(False, True)
-        set_root_icon(root, resource_path("pickaxe.ico"))
+        set_root_icon(root, resource_path("icons/pickaxe.ico"))
         root.title(WINDOW_TITLE)  # window title
-        root.bind_all("<KeyPress-Escape>", self.unfocus)  # pressing ESC unfocuses selection
-        # restore last window position
-        if self._twitch.settings.window_position:
-            root.geometry(self._twitch.settings.window_position)
-        else:
-            self._twitch.settings.window_position = self._root.geometry()
+        root.bind_all(
+            "<KeyPress-Escape>", self.unfocus
+        )  # pressing ESC unfocuses selection
         # Image cache for displaying images
         self._cache = ImageCache(self)
 
@@ -1962,7 +2236,7 @@ class GUIManager:
         self._style = style = ttk.Style(root)
         default_font = nametofont("TkDefaultFont")
         # theme
-        theme = ''
+        theme = ""
         # theme = style.theme_names()[6]
         # style.theme_use(theme)
         # Fix treeview's background color from tags not working (also see '_fixed_map')
@@ -1997,7 +2271,7 @@ class GUIManager:
         style.configure("MS.TLabel", font=monospaced_font)
         # button style with a larger font
         large_font = default_font.copy()
-        large_font.config(size=12)
+        large_font.config(size=10)
         style.configure("Large.TButton", font=large_font)
         # label style that mimics links
         link_font = default_font.copy()
@@ -2091,7 +2365,8 @@ class GUIManager:
         # style.map() returns an empty list for missing options, so this
         # should be future-safe.
         return [
-            elm for elm in self._style.map("Treeview", query_opt=option)
+            elm
+            for elm in self._style.map("Treeview", query_opt=option)
             if elm[:2] != ("!disabled", "!selected")
         ]
 
@@ -2101,7 +2376,9 @@ class GUIManager:
         to the application by Windows.
         """
         if msg == win32con.WM_DESTROY:
-            win32api.SetWindowLong(self._handle, win32con.GWL_WNDPROC, self.old_wnd_proc)
+            win32api.SetWindowLong(
+                self._handle, win32con.GWL_WNDPROC, self.old_wnd_proc
+            )
         if msg in self._message_map:
             return self._message_map[msg](w_param, l_param)
         return win32gui.CallWindowProc(self.old_wnd_proc, hwnd, msg, w_param, l_param)
@@ -2124,7 +2401,10 @@ class GUIManager:
 
     async def coro_unless_closed(self, coro: abc.Awaitable[_T]) -> _T:
         # In Python 3.11, we need to explicitly wrap awaitables
-        tasks = [asyncio.ensure_future(coro), asyncio.ensure_future(self._close_requested.wait())]
+        tasks = [
+            asyncio.ensure_future(coro),
+            asyncio.ensure_future(self._close_requested.wait()),
+        ]
         done: set[asyncio.Task[Any]]
         pending: set[asyncio.Task[Any]]
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -2191,7 +2471,6 @@ class GUIManager:
 
     # these are here to interface with underlaying GUI components
     def save(self, *, force: bool = False) -> None:
-        self._twitch.settings.window_position = self._root.geometry()
         self._cache.save(force=force)
 
     def grab_attention(self, *, sound: bool = True):
@@ -2200,7 +2479,7 @@ class GUIManager:
         if sound:
             self._root.bell()
 
-    def set_games(self, games: abc.Iterable[Game]) -> None:
+    def set_games(self, games: set[Game]) -> None:
         self.settings.set_games(games)
 
     def display_drop(
@@ -2223,7 +2502,9 @@ class GUIManager:
 def set_theme(root, manager, name):
     style = ttk.Style(root)
     if not hasattr(set_theme, "default_style"):
-        set_theme.default_style = style.theme_use()         # "Themes" is more fitting for the recolour and "Style" for the button style.
+        set_theme.default_style = (
+            style.theme_use()
+        )  # "Themes" is more fitting for the recolour and "Style" for the button style.
 
     default_font = nametofont("TkDefaultFont")
     large_font = default_font.copy()
@@ -2232,73 +2513,110 @@ def set_theme(root, manager, name):
     link_font.config(underline=True)
 
     def configure_combobox_list(combobox, flag, value):
-                combobox.update_idletasks()
-                popdown_window = combobox.tk.call("ttk::combobox::PopdownWindow", combobox)
-                listbox = f"{popdown_window}.f.l"
-                combobox.tk.call(listbox, "configure", flag, value)
+        combobox.update_idletasks()
+        popdown_window = combobox.tk.call("ttk::combobox::PopdownWindow", combobox)
+        listbox = f"{popdown_window}.f.l"
+        combobox.tk.call(listbox, "configure", flag, value)
 
     # Style options, !!!"background" and "bg" is not interchangable for some reason!!!
     if name == "dark":
         bg_grey = "#181818"
         active_grey = "#2b2b2b"
         # General
-        style.theme_use('alt')      # We have to switch the theme, because OS-defaults ("vista") don't support certain customisations, like Treeview-fieldbackground etc.
-        style.configure('.', background=bg_grey, foreground="white")
+        style.theme_use(
+            "alt"
+        )  # We have to switch the theme, because OS-defaults ("vista") don't support certain customisations, like Treeview-fieldbackground etc.
+        style.configure(".", background=bg_grey, foreground="white")
         style.configure("Link.TLabel", font=link_font, foreground="#00aaff")
         # Buttons
-        style.map("TButton",
-                  background=[("active", active_grey)])
+        style.map("TButton", background=[("active", active_grey)])
         # Tabs
         style.configure("TNotebook.Tab", background=bg_grey)
-        style.map("TNotebook.Tab",
-                  background=[("selected", active_grey)])
+        style.map("TNotebook.Tab", background=[("selected", active_grey)])
         # Checkboxes
-        style.configure("TCheckbutton", foreground="black") # The checkbox has to be white since it's an image, so the tick has to be black
-        style.map("TCheckbutton",
-                  background=[('active', active_grey)])
+        style.configure(
+            "TCheckbutton", foreground="black"
+        )  # The checkbox has to be white since it's an image, so the tick has to be black
+        style.map("TCheckbutton", background=[("active", active_grey)])
         # Output field
-        manager.output._text.configure(bg=bg_grey, fg="white", selectbackground=active_grey)
+        manager.output._text.configure(
+            bg=bg_grey, fg="white", selectbackground=active_grey
+        )
         # Include/Exclude lists
         manager.settings._exclude_list.configure(bg=bg_grey, fg="white")
         manager.settings._priority_list.configure(bg=bg_grey, fg="white")
         # Channel list
-        style.configure('Treeview', background=bg_grey, fieldbackground=bg_grey)
+        style.configure("Treeview", background=bg_grey, fieldbackground=bg_grey)
         manager.channels._table
         # Inventory
         manager.inv._canvas.configure(bg=bg_grey)
         # Scroll bars
-        style.configure("TScrollbar", foreground="white", troughcolor=bg_grey, bordercolor=bg_grey,  arrowcolor="white")
-        style.map("TScrollbar",
-                  background=[("active", bg_grey), ("!active", bg_grey)])
+        style.configure(
+            "TScrollbar",
+            foreground="white",
+            troughcolor=bg_grey,
+            bordercolor=bg_grey,
+            arrowcolor="white",
+        )
+        style.map("TScrollbar", background=[("active", bg_grey), ("!active", bg_grey)])
         # Language selection box _select_menu
-        manager.settings._select_menu.configure(bg=bg_grey, fg="white", activebackground=active_grey, activeforeground="white") # Couldn't figure out how to change the border, so it stays black
-        for index in range(manager.settings._select_menu.menu.index("end")+1):
-             manager.settings._select_menu.menu.entryconfig(index, background=bg_grey, activebackground=active_grey, foreground="white")
+        manager.settings._select_menu.configure(
+            bg=bg_grey,
+            fg="white",
+            activebackground=active_grey,
+            activeforeground="white",
+        )  # Couldn't figure out how to change the border, so it stays black
+        for index in range(manager.settings._select_menu.menu.index("end") + 1):
+            manager.settings._select_menu.menu.entryconfig(
+                index,
+                background=bg_grey,
+                activebackground=active_grey,
+                foreground="white",
+            )
         # Proxy field
-        style.configure("TEntry", foreground="white", selectbackground=active_grey, fieldbackground=bg_grey)
+        style.configure(
+            "TEntry",
+            foreground="white",
+            selectbackground=active_grey,
+            fieldbackground=bg_grey,
+        )
         # Include/Exclude box
-        style.configure("TCombobox", foreground="white", selectbackground=active_grey, fieldbackground=bg_grey, arrowcolor="white")
-        style.map("TCombobox", background=[("active", active_grey), ("disabled", bg_grey)])
+        style.configure(
+            "TCombobox",
+            foreground="white",
+            selectbackground=active_grey,
+            fieldbackground=bg_grey,
+            arrowcolor="white",
+        )
+        style.map(
+            "TCombobox", background=[("active", active_grey), ("disabled", bg_grey)]
+        )
         # Include list
-        configure_combobox_list(manager.settings._priority_entry, "-background", bg_grey)
-        configure_combobox_list(manager.settings._priority_entry, "-foreground", "white")
-        configure_combobox_list(manager.settings._priority_entry, "-selectbackground", active_grey)
+        configure_combobox_list(
+            manager.settings._priority_entry, "-background", bg_grey
+        )
+        configure_combobox_list(
+            manager.settings._priority_entry, "-foreground", "white"
+        )
+        configure_combobox_list(
+            manager.settings._priority_entry, "-selectbackground", active_grey
+        )
         # Exclude list
         configure_combobox_list(manager.settings._exclude_entry, "-background", bg_grey)
         configure_combobox_list(manager.settings._exclude_entry, "-foreground", "white")
-        configure_combobox_list(manager.settings._exclude_entry, "-selectbackground", active_grey)
+        configure_combobox_list(
+            manager.settings._exclude_entry, "-selectbackground", active_grey
+        )
 
-    else: # When creating a new theme, additional values might need to be set, so the default theme remains consistent
+    else:  # When creating a new theme, additional values might need to be set, so the default theme remains consistent
         # General
         style.theme_use(set_theme.default_style)
-        style.configure('.', background="#f0f0f0", foreground="#000000")
+        style.configure(".", background="#f0f0f0", foreground="#000000")
         # Buttons
-        style.map("TButton",
-                  background=[("active", "#ffffff")])
+        style.map("TButton", background=[("active", "#ffffff")])
         # Tabs
         style.configure("TNotebook.Tab", background="#f0f0f0")
-        style.map("TNotebook.Tab",
-                  background=[("selected", "#ffffff")])
+        style.map("TNotebook.Tab", background=[("selected", "#ffffff")])
         # Checkboxes don't need to be reverted
         # Output field
         manager.output._text.configure(bg="#ffffff", fg="#000000")
@@ -2310,19 +2628,37 @@ def set_theme(root, manager, name):
         manager.inv._canvas.configure(bg="#f0f0f0")
         # Scroll bars don't need to be reverted
         # Language selection box _select_menu
-        manager.settings._select_menu.configure(bg="#ffffff", fg="black", activebackground="#f0f0f0", activeforeground="black") # Couldn't figure out how to change the border, so it stays black
-        for index in range(manager.settings._select_menu.menu.index("end")+1):
-             manager.settings._select_menu.menu.entryconfig(index, background="#f0f0f0", activebackground="#0078d7", foreground="black")
+        manager.settings._select_menu.configure(
+            bg="#ffffff",
+            fg="black",
+            activebackground="#f0f0f0",
+            activeforeground="black",
+        )  # Couldn't figure out how to change the border, so it stays black
+        for index in range(manager.settings._select_menu.menu.index("end") + 1):
+            manager.settings._select_menu.menu.entryconfig(
+                index,
+                background="#f0f0f0",
+                activebackground="#0078d7",
+                foreground="black",
+            )
         # Proxy field doesn't need to be reverted
         # Include/Exclude dropdown - Only the lists have to be reverted
         # Include list
-        configure_combobox_list(manager.settings._priority_entry, "-background", "white")
-        configure_combobox_list(manager.settings._priority_entry, "-foreground", "black")
-        configure_combobox_list(manager.settings._priority_entry, "-selectbackground", "#0078d7")
+        configure_combobox_list(
+            manager.settings._priority_entry, "-background", "white"
+        )
+        configure_combobox_list(
+            manager.settings._priority_entry, "-foreground", "black"
+        )
+        configure_combobox_list(
+            manager.settings._priority_entry, "-selectbackground", "#0078d7"
+        )
         # Exclude list
         configure_combobox_list(manager.settings._exclude_entry, "-background", "white")
         configure_combobox_list(manager.settings._exclude_entry, "-foreground", "black")
-        configure_combobox_list(manager.settings._exclude_entry, "-selectbackground", "#0078d7")
+        configure_combobox_list(
+            manager.settings._exclude_entry, "-selectbackground", "#0078d7"
+        )
 
 
 ###################
@@ -2336,6 +2672,8 @@ if __name__ == "__main__":
     from types import SimpleNamespace
 
     class StrNamespace(SimpleNamespace):
+        __hash__ = object.__hash__  # type: ignore
+
         def __str__(self):
             if hasattr(self, "_str__"):
                 return self._str__(self)
@@ -2429,11 +2767,11 @@ if __name__ == "__main__":
             is_claimed=False,
             preconditions=True,
             benefits=benefits,
-            rewards_text=lambda: ', '.join(b.name for b in benefits),
-            progress=cm/tm,
+            rewards_text=lambda: ", ".join(b.name for b in benefits),
+            progress=cm / tm,
             current_minutes=cm,
             required_minutes=tm,
-            remaining_minutes=tm-cm,
+            remaining_minutes=tm - cm,
         )
         mock.campaign.timed_drops["0"] = mock
         mock.campaign.drops = mock.campaign.timed_drops.values()
@@ -2449,17 +2787,18 @@ if __name__ == "__main__":
                 dark_theme=False,
                 autostart=False,
                 language="English",
-                priority_only=False,
                 prioritize_by_ending_soonest=False,
                 autostart_tray=False,
                 exclude={"Lit Game"},
                 tray_notifications=True,
-                window_position= "940x690+3203+345",
+                alter=lambda: None,
+                priority_mode=PriorityMode.PRIORITY_ONLY,
             )
         )
         mock.change_state = lambda state: mock.gui.print(f"State change: {state.value}")
         mock.state_change = lambda state: partial(mock.change_state, state)
         mock.request = aiohttp.request
+        # _.set_language("Dansk")
         gui = GUIManager(mock)  # type: ignore
         mock.gui = gui
         mock.close = gui.stop
@@ -2469,11 +2808,15 @@ if __name__ == "__main__":
         # Login form
         gui.login.update("Login required", None)
         # Game selector and settings panel games
-        gui.set_games([
-            create_game(420690, "Lit Game"),
-            create_game(123456, "Best Game"),
-            create_game(654321, "My Game Very Long Name"),
-        ])
+        gui.set_games(
+            set(
+                [
+                    create_game(420690, "Lit Game"),
+                    create_game(123456, "Best Game"),
+                    create_game(654321, "My Game Very Long Name"),
+                ]
+            )
+        )
         # Channel list
         gui.channels.display(
             create_channel(
@@ -2488,9 +2831,18 @@ if __name__ == "__main__":
             add=True,
         )
         channel = create_channel(
-            name="Traitus", status=1, game=None, drops=False, viewers=0, points=0, acl_based=True
+            name="Traitus",
+            status=1,
+            game=None,
+            drops=False,
+            viewers=0,
+            points=0,
+            acl_based=True,
         )
-        gui.channels.display(channel, add=True,)
+        gui.channels.display(
+            channel,
+            add=True,
+        )
         gui.channels.set_watching(channel)
         gui.channels.display(
             create_channel(
@@ -2553,7 +2905,7 @@ if __name__ == "__main__":
         drop.progress = 1.0
         campaign = drop.campaign
         campaign.remaining_minutes -= 1
-        campaign.progress = 3/7
+        campaign.progress = 3 / 7
         campaign.claimed_drops = 3
         campaign.remaining_drops = 4
         gui.display_drop(drop)

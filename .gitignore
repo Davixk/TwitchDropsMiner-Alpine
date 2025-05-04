@@ -13,6 +13,8 @@ __pycache__
 /cache
 /*.jar
 /*log.txt
+/dump.dat
+log.txt
 /lock.file
 settings.json
 #/lang/English.json
@@ -22,3 +24,4 @@ settings.json
 /appimage-build
 /*.AppImage
 /*.AppImage.zsync
+.venv

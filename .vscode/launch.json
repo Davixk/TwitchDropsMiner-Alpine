@@ -6,7 +6,7 @@
     "configurations": [
         {
             "name": "Run Current File",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
@@ -21,26 +21,8 @@
             "justMyCode": false
         },
         {
-            "name": "Run App (INFO)",
-            "type": "python",
-            "request": "launch",
-            "program": "main.py",
-            "args": ["-vv"],
-            "console": "integratedTerminal",
-            "justMyCode": false
-        },
-        {
-            "name": "Run App (INFO+Tray)",
-            "type": "python",
-            "request": "launch",
-            "program": "main.py",
-            "args": ["-vv", "--tray"],
-            "console": "integratedTerminal",
-            "justMyCode": false
-        },
-        {
             "name": "Run App (CALL)",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "main.py",
             "args": ["-vvv"],
@@ -48,17 +30,35 @@
             "justMyCode": false
         },
         {
-            "name": "Run App (DEBUG+WS)",
-            "type": "python",
+            "name": "Run App (DUMP)",
+            "type": "debugpy",
             "request": "launch",
             "program": "main.py",
-            "args": ["-vvv", "--debug-ws"],
+            "args": ["--dump"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Run App (DEBUG+WS)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main.py",
+            "args": ["-vvv", "--debug-gql"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Run App (DEBUG+GQL)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main.py",
+            "args": ["-vvv", "--debug-gql"],
             "console": "integratedTerminal",
             "justMyCode": false
         },
         {
             "name": "Debug GUI",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "gui.py",
             "console": "integratedTerminal",

@@ -19,25 +19,15 @@ from contextlib import suppress
 from functools import cached_property
 from datetime import datetime, timezone
 from collections import abc, OrderedDict
-from typing import (
-    Any, Literal, MutableSet, Callable, Generic, Mapping, TypeVar, cast, TYPE_CHECKING
-)
+from typing import Any, Literal, Callable, Generic, Mapping, TypeVar, ParamSpec, cast
 
 import yarl
 from PIL.ImageTk import PhotoImage
 from PIL import Image as Image_module
 
-from constants import JsonType, IS_PACKAGED
 from exceptions import ExitRequest, ReloadRequest
+from constants import IS_PACKAGED, JsonType, PriorityMode
 from constants import _resource_path as resource_path  # noqa
-
-if TYPE_CHECKING:
-    from typing_extensions import ParamSpec
-else:
-    # stub it
-    class ParamSpec:
-        def __init__(*args, **kwargs):
-            pass
 
 
 _T = TypeVar("_T")  # type
@@ -50,7 +40,7 @@ logger = logging.getLogger("TwitchDrops")
 def set_root_icon(root: tk.Tk, image_path: Path | str) -> None:
     with Image_module.open(image_path) as image:
         icon_photo = PhotoImage(master=root, image=image)
-    root.iconphoto(True, icon_photo)
+    root.iconphoto(True, icon_photo)  # type: ignore[arg-type]
     # keep a reference to the PhotoImage to avoid the ResourceWarning
     root._icon_image = icon_photo  # type: ignore[attr-defined]
 
@@ -131,18 +121,36 @@ def deduplicate(iterable: abc.Iterable[_T]) -> list[_T]:
 
 
 def task_wrapper(
-    afunc: abc.Callable[_P, abc.Coroutine[Any, Any, _T]]
-) -> abc.Callable[_P, abc.Coroutine[Any, Any, _T]]:
-    @wraps(afunc)
-    async def wrapper(*args: _P.args, **kwargs: _P.kwargs):
-        try:
-            await afunc(*args, **kwargs)
-        except (ExitRequest, ReloadRequest):
-            pass
-        except Exception:
-            logger.exception("Exception in task")
-            raise  # raise up to the wrapping task
-    return wrapper
+    afunc: abc.Callable[_P, abc.Coroutine[Any, Any, _T]] | None = None, *, critical: bool = False
+):
+    def decorator(
+        afunc: abc.Callable[_P, abc.Coroutine[Any, Any, _T]]
+    ) -> abc.Callable[_P, abc.Coroutine[Any, Any, _T]]:
+        @wraps(afunc)
+        async def wrapper(*args: _P.args, **kwargs: _P.kwargs):
+            try:
+                await afunc(*args, **kwargs)
+            except (ExitRequest, ReloadRequest):
+                pass
+            except Exception:
+                logger.exception(f"Exception in {afunc.__name__} task")
+                if critical:
+                    # critical task's death should trigger a termination.
+                    # there isn't an easy and sure way to obtain the Twitch instance here,
+                    # but we can improvise finding it
+                    from twitch import Twitch  # cyclic import
+                    probe = args and args[0] or None  # extract from 'self' arg
+                    if isinstance(probe, Twitch):
+                        probe.close()
+                    elif probe is not None:
+                        probe = getattr(probe, "_twitch", None)  # extract from '_twitch' attr
+                        if isinstance(probe, Twitch):
+                            probe.close()
+                raise  # raise up to the wrapping task
+        return wrapper
+    if afunc is None:
+        return decorator
+    return decorator(afunc)
 
 
 def invalidate_cache(instance, *attrnames):
@@ -157,15 +165,17 @@ def invalidate_cache(instance, *attrnames):
 def _serialize(obj: Any) -> Any:
     # convert data
     d: int | str | float | list[Any] | JsonType
-    if isinstance(obj, set):
-        d = list(obj)
-    elif isinstance(obj, Enum):
-        d = obj.value
-    elif isinstance(obj, datetime):
+    if isinstance(obj, datetime):
         if obj.tzinfo is None:
             # assume naive objects are UTC
             obj = obj.replace(tzinfo=timezone.utc)
         d = obj.timestamp()
+    elif isinstance(obj, set):
+        d = list(obj)
+    elif isinstance(obj, Enum):
+        # NOTE: IntEnum cannot be used, as it will get serialized as a plain integer,
+        # then loaded back as an integer as well.
+        d = obj.value
     elif isinstance(obj, yarl.URL):
         d = str(obj)
     else:
@@ -180,8 +190,9 @@ def _serialize(obj: Any) -> Any:
 _MISSING = object()
 SERIALIZE_ENV: dict[str, Callable[[Any], object]] = {
     "set": set,
-    "datetime": lambda d: datetime.fromtimestamp(d, timezone.utc),
     "URL": yarl.URL,
+    "PriorityMode": PriorityMode,
+    "datetime": lambda d: datetime.fromtimestamp(d, timezone.utc),
 }
 
 
@@ -212,16 +223,14 @@ def merge_json(obj: JsonType, template: Mapping[Any, Any]) -> None:
     # NOTE: This modifies object in place
     for k, v in list(obj.items()):
         if k not in template:
+            # unknown key: overwrite from template
             del obj[k]
-        elif isinstance(v, dict):
-            if isinstance(template[k], dict):
-                merge_json(v, template[k])
-            else:
-                # object is a dict, template is not: overwrite from template
-                obj[k] = template[k]
-        elif isinstance(template[k], dict):
-            # template is a dict, object is not: overwrite from template
+        elif type(v) is not type(template[k]):
+            # types don't match: overwrite from template
             obj[k] = template[k]
+        elif isinstance(v, dict):
+            assert isinstance(template[k], dict)
+            merge_json(v, template[k])
     # ensure the object is not missing any keys
     for k in template.keys():
         if k not in obj:
@@ -316,46 +325,6 @@ class ExponentialBackoff:
 
     def reset(self) -> None:
         self.steps = 0
-
-
-class OrderedSet(MutableSet[_T]):
-    """
-    Implementation of a set that preserves insertion order,
-    based on OrderedDict with values set to None.
-    """
-    def __init__(self, iterable: abc.Iterable[_T] = [], /):
-        self._items: OrderedDict[_T, None] = OrderedDict((item, None) for item in iterable)
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}([{', '.join(map(repr, self._items))}])"
-
-    def __contains__(self, item: object, /) -> bool:
-        return item in self._items
-
-    def __iter__(self) -> abc.Iterator[_T]:
-        return iter(self._items)
-
-    def __len__(self) -> int:
-        return len(self._items)
-
-    def add(self, item: _T, /) -> None:
-        self._items[item] = None
-
-    def discard(self, item: _T, /) -> None:
-        with suppress(KeyError):
-            del self._items[item]
-
-    def update(self, *others: abc.Iterable[_T]) -> None:
-        for it in others:
-            for item in it:
-                if item not in self._items:
-                    self._items[item] = None
-
-    def difference_update(self, *others: abc.Iterable[_T]) -> None:
-        for it in others:
-            for item in it:
-                if item in self._items:
-                    del self._items[item]
 
 
 class AwaitableValue(Generic[_T]):

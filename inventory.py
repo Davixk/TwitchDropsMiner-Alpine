@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import math
 from itertools import chain
 from typing import TYPE_CHECKING
 from functools import cached_property
@@ -97,21 +98,27 @@ class BaseDrop:
             )
         )
 
-    def _base_can_earn(self) -> bool:
+    def _base_earn_conditions(self) -> bool:
+        # define when a drop can be earned or not
         return (
             self.preconditions_met  # preconditions are met
             and not self.is_claimed  # isn't already claimed
+        )
+
+    def _base_can_earn(self) -> bool:
+        # cross-participates in can_earn and can_earn_within handling, where a timeframe is added
+        return (
+            self._base_earn_conditions()
             # is within the timeframe
             and self.starts_at <= datetime.now(timezone.utc) < self.ends_at
         )
 
     def can_earn(self, channel: Channel | None = None) -> bool:
-        return self.campaign._base_can_earn(channel) and self._base_can_earn()
+        return self._base_can_earn() and self.campaign._base_can_earn(channel)
 
     def can_earn_within(self, stamp: datetime) -> bool:
         return (
-            self.preconditions_met  # preconditions are met
-            and not self.is_claimed  # isn't already claimed
+            self._base_earn_conditions()
             and self.ends_at > datetime.now(timezone.utc)
             and self.starts_at < stamp
         )
@@ -132,6 +139,14 @@ class BaseDrop:
 
     def update_claim(self, claim_id: str):
         self.claim_id = claim_id
+
+    async def generate_claim(self) -> None:
+        # claim IDs now appear to be constructed from other IDs we have access to
+        # Format: UserID#CampaignID#DropID
+        # NOTE: This marks a drop as a ready-to-claim, so we may want to later ensure
+        # its mining progress is finished first
+        auth_state = await self.campaign._twitch.get_auth()
+        self.claim_id = f"{auth_state.user_id}#{self.campaign.id}#{self.id}"
 
     def rewards_text(self, delim: str = ", ") -> str:
         return delim.join(benefit.name for benefit in self.benefits)
@@ -184,12 +199,10 @@ class TimedDrop(BaseDrop):
         super().__init__(campaign, data, claimed_benefits)
         self._manager: GUIManager = self._twitch.gui
         self._gui_inv: InventoryOverview = self._manager.inv
-        self.current_minutes: int = 0
-        if "self" in data:
-            self.current_minutes = data["self"]["currentMinutesWatched"]
+        self.current_minutes: int = "self" in data and data["self"]["currentMinutesWatched"] or 0
         self.required_minutes: int = data["requiredMinutesWatched"]
         if self.is_claimed:
-            # claimed drops report 0 current minutes, so we need to make a correction
+            # claimed drops may report inconsistent current minutes, so we need to overwrite them
             self.current_minutes = self.required_minutes
 
     def __repr__(self) -> str:
@@ -211,24 +224,32 @@ class TimedDrop(BaseDrop):
 
     @property
     def total_remaining_minutes(self) -> int:
-        return (
-            sum(
-                (
-                    self.campaign.timed_drops[pid].remaining_minutes
-                    for pid in self._all_preconditions
-                ),
-                start=self.remaining_minutes,
-            )
+        return sum(
+            (
+                self.campaign.timed_drops[pid].remaining_minutes
+                for pid in self._all_preconditions
+            ),
+            start=self.remaining_minutes,
         )
 
     @cached_property
     def progress(self) -> float:
-        if self.required_minutes:   # Quick fix to prevent division by zero crash
-            return self.current_minutes / self.required_minutes
-        else:
-            self._manager.print(f'Required_minutes for "{self.name}" from "{self.campaign.game.name}" is 0. This could be due to a subscription requirement, tracked in Issue #101. Take a look at the drop, but this can likely be ignored.')
-            self.preconditions_met = False
-            return 0
+        if self.current_minutes <= 0 or self.required_minutes <= 0:
+            return 0.0
+        elif self.current_minutes >= self.required_minutes:
+            return 1.0
+        return self.current_minutes / self.required_minutes
+
+    @property
+    def availability(self) -> float:
+        if not self._base_can_earn():
+            # this verifies "self.total_remaining_minutes > 0" and "now < self.ends_at"
+            return math.inf
+        now = datetime.now(timezone.utc)
+        return ((self.ends_at - now).total_seconds() / 60) / self.total_remaining_minutes
+
+    def _base_earn_conditions(self) -> bool:
+        return super()._base_earn_conditions() and self.required_minutes > 0
 
     def _on_claim(self) -> None:
         result = super()._on_claim()
@@ -247,8 +268,14 @@ class TimedDrop(BaseDrop):
         return result
 
     def update_minutes(self, minutes: int):
-        self.current_minutes = minutes
+        if minutes < 0:
+            return
+        elif minutes <= self.required_minutes:
+            self.current_minutes = minutes
+        else:
+            self.current_minutes = self.required_minutes
         self._on_minutes_changed()
+        self.display()
 
     def display(self, *, countdown: bool = True, subone: bool = False):
         self._manager.display_drop(self, countdown=countdown, subone=subone)
@@ -257,6 +284,7 @@ class TimedDrop(BaseDrop):
         if self.current_minutes < self.required_minutes:
             self.current_minutes += 1
             self._on_minutes_changed()
+        self.display()
 
 
 class DropsCampaign:
@@ -333,6 +361,10 @@ class DropsCampaign:
     @cached_property
     def progress(self) -> float:
         return sum(d.progress for d in self.drops) / self.total_drops
+
+    @property
+    def availability(self) -> float:
+        return min(d.availability for d in self.drops)
 
     def _on_claim(self) -> None:
         invalidate_cache(self, "finished", "claimed_drops", "remaining_drops")
