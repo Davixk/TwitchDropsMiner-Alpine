@@ -5,7 +5,7 @@ from typing import Any, TypedDict, TYPE_CHECKING
 from yarl import URL
 
 from utils import json_load, json_save
-from constants import CONFIG_PATH, SETTINGS_PATH, DEFAULT_LANG
+from constants import CONFIG_PATH, SETTINGS_PATH, DEFAULT_LANG, PriorityMode
 
 if TYPE_CHECKING:
     from main import ParsedArgs
@@ -15,15 +15,13 @@ class SettingsFile(TypedDict):
     proxy: URL
     language: str
     dark_theme: bool
-    autostart: bool
     exclude: set[str]
     priority: list[str]
-    priority_only: bool
     prioritize_by_ending_soonest: bool
     autostart_tray: bool
     connection_quality: int
     tray_notifications: bool
-    window_position: str
+    priority_mode: PriorityMode
 
 
 default_settings: SettingsFile = {
@@ -31,14 +29,12 @@ default_settings: SettingsFile = {
     "priority": [],
     "exclude": set(),
     "dark_theme": False,
-    "autostart": False,
-    "priority_only": True,
     "prioritize_by_ending_soonest": False,
     "autostart_tray": False,
     "connection_quality": 1,
     "language": DEFAULT_LANG,
     "tray_notifications": True,
-    "window_position": "",
+    "priority_mode": PriorityMode.PRIORITY_ONLY,
 }
 
 
@@ -46,7 +42,7 @@ class Settings:
     # from args
     log: bool
     tray: bool
-    no_run_check: bool
+    dump: bool
     # args properties
     debug_ws: int
     debug_gql: int
@@ -55,15 +51,13 @@ class Settings:
     proxy: URL
     language: str
     dark_theme: bool
-    autostart: bool
     exclude: set[str]
     priority: list[str]
-    priority_only: bool
     prioritize_by_ending_soonest: bool
     autostart_tray: bool
     connection_quality: int
     tray_notifications: bool
-    window_position: str
+    priority_mode: PriorityMode
 
     PASSTHROUGH = ("_settings", "_args", "_altered")
 

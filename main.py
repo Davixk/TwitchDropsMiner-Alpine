@@ -20,9 +20,8 @@ if __name__ == "__main__":
     from tkinter import messagebox
     from typing import IO, NoReturn
 
-    if sys.version_info >= (3, 10):
-        import truststore
-        truststore.inject_into_ssl()
+    import truststore
+    truststore.inject_into_ssl()
 
     from translate import _
     from twitch import Twitch
@@ -30,9 +29,12 @@ if __name__ == "__main__":
     from version import __version__
     from exceptions import CaptchaRequired
     from utils import lock_file, resource_path, set_root_icon
-    from constants import CALL, SELF_PATH, FILE_FORMATTER, LOG_PATH, LOCK_PATH
+    from constants import LOGGING_LEVELS, SELF_PATH, FILE_FORMATTER, LOG_PATH, LOCK_PATH
 
     warnings.simplefilter("default", ResourceWarning)
+
+    if sys.version_info < (3, 10):
+        raise RuntimeError("Python 3.10 or higher is required")
 
     class Parser(argparse.ArgumentParser):
         def __init__(self, *args, **kwargs) -> None:
@@ -55,18 +57,12 @@ if __name__ == "__main__":
         _debug_gql: bool
         log: bool
         tray: bool
-        no_run_check: bool
+        dump: bool
 
         # TODO: replace int with union of literal values once typeshed updates
         @property
         def logging_level(self) -> int:
-            return {
-                0: logging.ERROR,
-                1: logging.WARNING,
-                2: logging.INFO,
-                3: CALL,
-                4: logging.DEBUG,
-            }[min(self._verbose, 4)]
+            return LOGGING_LEVELS[min(self._verbose, 4)]
 
         @property
         def debug_ws(self) -> int:
@@ -95,7 +91,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     root.overrideredirect(True)
     root.withdraw()
-    set_root_icon(root, resource_path("pickaxe.ico"))
+    set_root_icon(root, resource_path("icons/pickaxe.ico"))
     root.update()
     parser = Parser(
         SELF_PATH.name,
@@ -105,7 +101,8 @@ if __name__ == "__main__":
     parser.add_argument("-v", dest="_verbose", action="count", default=0)
     parser.add_argument("--tray", action="store_true")
     parser.add_argument("--log", action="store_true")
-    # debug options
+    parser.add_argument("--dump", action="store_true")
+    # undocumented debug args
     parser.add_argument(
         "--debug-ws", dest="_debug_ws", action="store_true"
     )
@@ -175,6 +172,7 @@ if __name__ == "__main__":
             await client.shutdown()
         if not client.gui.close_requested:
             # user didn't request the closure
+            client.gui.tray.change_icon("error")
             client.print(_("status", "terminated"))
             client.gui.status.update(_("gui", "status", "terminated"))
             # notify the user about the closure
