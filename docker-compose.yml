@@ -1,0 +1,14 @@
+services:
+  twitch-drops-miner:
+    container_name: twitch-drops-miner
+    image: nokodo/twitchdropsminer:latest
+    volumes:
+      - ./config:/TwitchDropsMiner/config
+      - ./cache:/TwitchDropsMiner/cache
+    ports:
+      # - 5900:5900 #VNC_LISTENING_PORT
+      - 5800:5800 #WEB_LISTENING_PORT
+    environment:
+      - USER_ID=568 #linux use 'id -u',see:https://github.com/jlesage/docker-baseimage-gui?tab=readme-ov-file#usergroup-ids
+      - GROUP_ID=568 #linux use 'id -g'
+      - VNC_PASSWORD=yourvncpassword
