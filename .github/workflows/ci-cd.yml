@@ -48,7 +48,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: nokodo/twitchdropsminer # Replace if your repo name is different
+          images: nokodo/twitchdropsminer
           # Define tagging strategy:
           # - 'dev' tag for pushes to the 'dev' branch
           # - 'latest' tag for pushes to the 'stable' branch
