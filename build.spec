@@ -53,14 +53,14 @@ hiddenimports: list[str] = [
 
 if sys.platform == "linux":
     # Needed files for better system tray support on Linux via pystray (AppIndicator backend).
-    arch = platform.machine()
-    datas.append(
-        (
-            Path(f"/usr/lib/{arch}-linux-gnu/girepository-1.0/AyatanaAppIndicator3-0.1.typelib"),
-            "gi_typelibs",
-        )
-    )
-    binaries.append((Path(f"/usr/lib/{arch}-linux-gnu/libayatana-appindicator3.so.1"), "."))
+    #arch = platform.machine()
+    #datas.append(
+    #    (
+    #        Path(f"/usr/lib/{arch}-linux-gnu/girepository-1.0/AyatanaAppIndicator3-0.1.typelib"),
+    #        "gi_typelibs",
+    #    )
+    #)
+    #binaries.append((Path(f"/usr/lib/{arch}-linux-gnu/libayatana-appindicator3.so.1"), "."))
 
     hiddenimports.extend([
         "gi.repository.Gtk",
