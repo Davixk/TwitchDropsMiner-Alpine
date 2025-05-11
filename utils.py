@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from collections import abc, OrderedDict
 from typing import Any, Literal, Callable, Generic, Mapping, TypeVar, ParamSpec, cast
 
-import yarl
+from yarl import URL
 from PIL.ImageTk import PhotoImage
 from PIL import Image as Image_module
 
@@ -176,7 +176,7 @@ def _serialize(obj: Any) -> Any:
         # NOTE: IntEnum cannot be used, as it will get serialized as a plain integer,
         # then loaded back as an integer as well.
         d = obj.value
-    elif isinstance(obj, yarl.URL):
+    elif isinstance(obj, URL):
         d = str(obj)
     else:
         raise TypeError(obj)
@@ -190,7 +190,7 @@ def _serialize(obj: Any) -> Any:
 _MISSING = object()
 SERIALIZE_ENV: dict[str, Callable[[Any], object]] = {
     "set": set,
-    "URL": yarl.URL,
+    "URL": URL,
     "PriorityMode": PriorityMode,
     "datetime": lambda d: datetime.fromtimestamp(d, timezone.utc),
 }
@@ -254,7 +254,8 @@ def json_save(path: Path, contents: Mapping[Any, Any], *, sort: bool = False) ->
         json.dump(contents, file, default=_serialize, sort_keys=sort, indent=4)
 
 
-def webopen(url: str):
+def webopen(url: URL | str):
+    url_str = str(url)
     if IS_PACKAGED and sys.platform == "linux":
         # https://pyinstaller.org/en/stable/
         # runtime-information.html#ld-library-path-libpath-considerations
@@ -268,7 +269,7 @@ def webopen(url: str):
             # pop current
             os.environ.pop(ld_env)
 
-        webbrowser.open_new_tab(url)
+        webbrowser.open_new_tab(url_str)
 
         if ld_path_curr is not None:
             os.environ[ld_env] = ld_path_curr
@@ -276,7 +277,7 @@ def webopen(url: str):
             # pop original
             os.environ.pop(ld_env)
     else:
-        webbrowser.open_new_tab(url)
+        webbrowser.open_new_tab(url_str)
 
 
 class ExponentialBackoff:
@@ -325,6 +326,51 @@ class ExponentialBackoff:
 
     def reset(self) -> None:
         self.steps = 0
+
+
+class RateLimiter:
+    def __init__(self, *, capacity: int, window: int):
+        self.total: int = 0
+        self.concurrent: int = 0
+        self.window: int = window
+        self.capacity: int = capacity
+        self._reset_task: asyncio.Task[None] | None = None
+        self._cond: asyncio.Condition = asyncio.Condition()
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.concurrent}/{self.total}/{self.capacity})"
+
+    def __del__(self) -> None:
+        if self._reset_task is not None:
+            self._reset_task.cancel()
+
+    def _can_proceed(self) -> bool:
+        return max(self.total, self.concurrent) < self.capacity
+
+    async def __aenter__(self):
+        async with self._cond:
+            await self._cond.wait_for(self._can_proceed)
+            self.total += 1
+            self.concurrent += 1
+            if self._reset_task is None:
+                self._reset_task = asyncio.create_task(self._rtask())
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.concurrent -= 1
+        async with self._cond:
+            self._cond.notify(self.capacity - self.concurrent)
+
+    async def _reset(self) -> None:
+        if self._reset_task is not None:
+            self._reset_task = None
+        async with self._cond:
+            self.total = 0
+            if self.concurrent < self.capacity:
+                self._cond.notify(self.capacity - self.concurrent)
+
+    async def _rtask(self) -> None:
+        await asyncio.sleep(self.window)
+        await self._reset()
 
 
 class AwaitableValue(Generic[_T]):

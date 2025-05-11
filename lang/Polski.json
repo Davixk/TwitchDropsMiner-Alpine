@@ -6,8 +6,6 @@
         "goes_online": "Nowy status kanału {channel}: ONLINE, zmieniam...",
         "goes_offline": "Nowy status kanału {channel}: OFFLINE, zmieniam...",
         "claimed_drop": "Odebrano drop: {drop}",
-        "claimed_points": "Odebrano punkty: {points}",
-        "earned_points": "Zdobyto punkty za oglądanie: {points} | Łącznie: {balance}",
         "no_channel": "Brak możliwych kanałów do oglądania. Oczekiwanie na nową kampanię...",
         "no_campaign": "Brak dostępnych aktywnych kampanii. Oczekiwanie na nową kampanię..."
     },
@@ -92,7 +90,6 @@
         "channels": {
             "name": "Kanały",
             "switch": "Zmień",
-            "load_points": "Załaduj punkty",
             "online": "ONLINE ✔",
             "pending": "W TOKU ⏳",
             "offline": "OFFLINE ❌",
@@ -100,8 +97,7 @@
                 "channel": "Kanał",
                 "status": "Status",
                 "game": "Gra",
-                "viewers": "Widzowie",
-                "points": "Punkty"
+                "viewers": "Widzowie"
             }
         },
         "inventory": {
@@ -138,8 +134,13 @@
                 "autostart": "Autostart: ",
                 "tray": "Autostart z zasobnika: ",
                 "tray_notifications": "Powiadomienia z zasobnika: ",
-                "priority_only": "Tylko priorytetowe: ",
+                "priority_mode": "Tryb priorytetu: ",
                 "proxy": "Proxy (wymaga restartu):"
+            },
+            "priority_modes": {
+                "priority_only": "Tylko lista priorytetów",
+                "ending_soonest": "Kończące się najwcześniej",
+                "low_availability": "Najniższa dostępność"
             },
             "game_name": "Nazwa gry",
             "priority": "Priorytety",
@@ -156,7 +157,7 @@
             "how_it_works": "Jak to działa?",
             "how_it_works_text": "Co kilkanaście sekund aplikacja pobiera metadane strumienia, udając jego oglądanie - to wystarczy, aby uzyskać postęp dropu. Zauważ, że w ten sposób możesz całkowicie pominąć konieczność pobierania rzeczywistego strumienia wideo i dźwięku. Do utrzymania statusu ONLINE lub OFFLINE kanałów używane jest połączenie WebSocket, które odbiera zdarzenia o zmianie statusu kanałów oraz aktualizuje aktualną ilość widzów.",
             "getting_started": "Pierwsze kroki",
-            "getting_started_text": "1. Zaloguj się do aplikacji.\n2. Upewnij się, że twoje konto Twitch jest połączone ze wszystkimi kampaniami, z których chcesz dropić.\n3. Odznacz opcję „Tylko priorytetowe” i kliknij „Przeładuj”, jeśli chcesz rozpocząć dropienie ze wszystkich aktywnych kampanii.\n4. Użyj listy „Priorytety”, aby wybrać uporządkowaną listę gier, z których chcesz otrzymać dropy. Gry z górnej części listy będą miały większy priorytet dropienia niż te niżej na liście.\n5. Zaznacz opcję „Tylko priorytetowe”, aby wykluczyć z dropienia gry, które nie są na liście priorytetowej.\n6. Użyj listy „Wykluczone”, aby wskazać aplikacji gry, z których przedmioty nigdy nie powinny być dropione.\n7. Zmiana zawartości list lub opcji „Tylko priorytetowe” wymaga kliknięcia „Przeładuj”, aby aplikacja mogła zastosować wprowadzone zmiany."
+            "getting_started_text": "1. Zaloguj się do aplikacji.\n2. Upewnij się, że twoje konto Twitch jest połączone ze wszystkimi kampaniami, z których chcesz dropić.\n3. Zmień tryb priorytetu na coś innego niż „Tylko lista priorytetów” i kliknij „Przeładuj”, jeśli chcesz rozpocząć dropienie ze wszystkich aktywnych kampanii.\n4. Użyj listy „Priorytety”, aby wybrać uporządkowaną listę gier, z których chcesz otrzymać dropy. Gry z górnej części listy będą miały większy priorytet dropienia niż te niżej na liście.\n5. Wybierz opcję „Tylko lista priorytetów”, aby wykluczyć z dropienia gry, które nie są na liście priorytetowej.\n6. Użyj listy „Wykluczone”, aby wskazać aplikacji gry, z których przedmioty nigdy nie powinny być dropione.\n7. Zmiana zawartości list „Priorytety” i „Wykluczone” oraz opcji „Tryb priorytetu” wymaga kliknięcia „Przeładuj”, aby aplikacja mogła zastosować wprowadzone zmiany."
         }
     }
 }
