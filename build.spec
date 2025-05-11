@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import sys
+import platform
+import fnmatch
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-SELF_PATH = str(Path(".").absolute())
+SELF_PATH = str(Path(".").resolve())
 if SELF_PATH not in sys.path:
     sys.path.insert(0, SELF_PATH)
 
@@ -14,6 +16,7 @@ from constants import WORKING_DIR, SITE_PACKAGES_PATH, DEFAULT_LANG
 if TYPE_CHECKING:
     from PyInstaller.building.api import PYZ, EXE
     from PyInstaller.building.build_main import Analysis
+
 
 # (source_path, dest_path, required)
 to_add: list[tuple[Path, str, bool]] = [
@@ -30,7 +33,7 @@ to_add: list[tuple[Path, str, bool]] = [
 for lang_filepath in WORKING_DIR.joinpath("lang").glob("*.json"):
     to_add.append((lang_filepath, "lang", True))
 
-# ensure the required to-be-added data exists
+# Ensure the required to-be-added data exists
 datas: list[tuple[Path, str]] = []
 for source_path, dest_path, required in to_add:
     if source_path.exists():
@@ -47,6 +50,29 @@ hiddenimports: list[str] = [
     "setuptools._distutils.file_util",
     "setuptools._distutils.archive_util",
 ]
+
+if sys.platform == "linux":
+    # Needed files for better system tray support on Linux via pystray (AppIndicator backend).
+    #arch = platform.machine()
+    #datas.append(
+    #    (
+    #        Path(f"/usr/lib/{arch}-linux-gnu/girepository-1.0/AyatanaAppIndicator3-0.1.typelib"),
+    #        "gi_typelibs",
+    #    )
+    #)
+    #binaries.append((Path(f"/usr/lib/{arch}-linux-gnu/libayatana-appindicator3.so.1"), "."))
+
+    hiddenimports.extend([
+        "gi.repository.Gtk",
+        "gi.repository.GObject",
+    ])
+    hooksconfig = {
+        "gi": {
+            "icons": [],
+            "themes": [],
+            "languages": ["en_US"]
+        }
+    }
 
 block_cipher = None
 a = Analysis(
@@ -65,12 +91,16 @@ a = Analysis(
     win_no_prefer_redirects=False,
 )
 
+# Exclude unneeded Linux libraries (supports globbing)
 excluded_binaries = [
-    "libicudata.so.66",
-    "libicuuc.so.66",
-    "librsvg-2.so.2"
+    "libicudata.so.*",
+    "libicuuc.so.*",
+    "librsvg-*.so.*"
 ]
-a.binaries = [b for b in a.binaries if b[0] not in excluded_binaries]
+a.binaries = [
+    b for b in a.binaries
+    if not any(fnmatch.fnmatch(b[0], pattern) for pattern in excluded_binaries)
+]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher, compress=True)
 exe = EXE(

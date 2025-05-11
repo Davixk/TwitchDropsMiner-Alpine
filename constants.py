@@ -33,6 +33,11 @@ else:
     # The Lib folder is also spelled in lowercase: 'lib'
     version_info = sys.version_info
     SYS_SITE_PACKAGES = f"lib/python{version_info.major}.{version_info.minor}/site-packages"
+# scripts venv path changes depending on the system platform
+if sys.platform == "win32":
+    SYS_SCRIPTS = "Scripts"
+else:
+    SYS_SCRIPTS = "bin"
 
 
 def _resource_path(relative_path: Path | str) -> Path:
@@ -42,7 +47,7 @@ def _resource_path(relative_path: Path | str) -> Path:
     Works for dev and for PyInstaller.
     """
     if IS_APPIMAGE:
-        base_path = Path(sys.argv[0]).absolute().parent
+        base_path = Path(sys.argv[0]).resolve().parent
     elif IS_PACKAGED:
         # PyInstaller's folder where the one-file app is unpacked
         meipass: str = getattr(sys, "_MEIPASS")
@@ -78,17 +83,19 @@ def _merge_vars(base_vars: JsonType, vars: JsonType) -> None:
 
 # Base Paths
 if IS_APPIMAGE:
-    SELF_PATH = Path(os.environ["APPIMAGE"]).absolute()
+    SELF_PATH = Path(os.environ["APPIMAGE"]).resolve()
 else:
-    # NOTE: pyinstaller will set sys.argv[0] to its own executable when building,
-    # detect this to use __file__ and main.py redirection instead
-    SELF_PATH = Path(sys.argv[0]).absolute()
-    if SELF_PATH.stem == "pyinstaller":
-        SELF_PATH = Path(__file__).with_name("main.py").absolute()
+    # NOTE: pyinstaller will set sys.argv[0] to its own executable when building
+    # NOTE: sys.argv[0] will point to gui.py when running the gui.py directly for GUI debug
+    # detect these and use __file__ and main.py redirection instead
+    SELF_PATH = Path(sys.argv[0]).resolve()
+    if SELF_PATH.stem == "pyinstaller" or SELF_PATH.name == "gui.py":
+        SELF_PATH = Path(__file__).with_name("main.py").resolve()
 WORKING_DIR = SELF_PATH.parent
 # Development paths
 VENV_PATH = Path(WORKING_DIR, "env")
 SITE_PACKAGES_PATH = Path(VENV_PATH, SYS_SITE_PACKAGES)
+SCRIPTS_PATH = Path(VENV_PATH, SYS_SCRIPTS)
 # Translations path
 # NOTE: These don't have to be available to the end-user, so the path points to the internal dir
 LANG_PATH = _resource_path("lang")
@@ -107,7 +114,7 @@ URLType = NewType("URLType", str)
 TopicProcess: TypeAlias = "abc.Callable[[int, JsonType], Any]"
 # Values
 MAX_INT = sys.maxsize
-BASE_TOPICS = 3
+BASE_TOPICS = 2
 MAX_WEBSOCKETS = 8
 WS_TOPICS_LIMIT = 50
 TOPICS_PER_CHANNEL = 2
@@ -118,7 +125,7 @@ DEFAULT_LANG = "English"
 # Intervals and Delays
 PING_INTERVAL = timedelta(minutes=3)
 PING_TIMEOUT = timedelta(seconds=10)
-ONLINE_DELAY = timedelta(seconds=20)
+ONLINE_DELAY = timedelta(seconds=120)
 WATCH_INTERVAL = timedelta(seconds=20)
 # Strings
 WINDOW_TITLE = f"Twitch Drops Miner v{__version__} (by DevilXD)"
@@ -158,7 +165,7 @@ class ClientType:
         "kimne78kx3ncx6brgo4mv6wki5h1ko",
         (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
         ),
     )
     MOBILE_WEB = ClientInfo(
@@ -169,31 +176,31 @@ class ClientType:
             # other platforms only use the major version
             (
                 "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Linux; Android 13; SM-A205U) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Linux; Android 13; SM-A102U) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Linux; Android 13; SM-G960U) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Linux; Android 13; SM-N960U) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Linux; Android 13; LM-Q720) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
             (
                 "Mozilla/5.0 (Linux; Android 13; LM-X420) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.6478.110 Mobile Safari/537.36"
+                "(KHTML, like Gecko) Chrome/136.0.7103.60 Mobile Safari/537.36"
             ),
         ]
     )
@@ -210,7 +217,7 @@ class ClientType:
         "ue6666qo983tsx6so1t0vnawi233wa",
         (
             "Mozilla/5.0 (Linux; Android 7.1; Smart Box C1) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
         ),
     )
 
@@ -310,7 +317,9 @@ GQL_OPERATIONS: dict[str, GQLOperation] = {
     "Inventory": GQLOperation(
         "Inventory",
         "09acb7d3d7e605a92bdfdcc465f6aa481b71c234d8686a9ba38ea5ed51507592",
-        # no variables needed
+        variables={
+            "fetchRewardCampaigns": False,
+        }
     ),
     # returns current state of drops (current drop progress)
     "CurrentDrop": GQLOperation(
@@ -332,7 +341,7 @@ GQL_OPERATIONS: dict[str, GQLOperation] = {
     # returns extended information about a particular campaign
     "CampaignDetails": GQLOperation(
         "DropCampaignDetails",
-        "e7acdecb05429a62f5984bdcb27ee938ae20543579bf73c3ae44e7c822bc4f54",
+        "039277bf98f3130929262cc7c6efd9c141ca3749cb6dca442fc8ead9a53f77c1",
         variables={
             "channelLogin": ...,  # user login
             "dropID": ...,  # campaign ID
@@ -349,13 +358,14 @@ GQL_OPERATIONS: dict[str, GQLOperation] = {
     # retuns stream playback access token
     "PlaybackAccessToken": GQLOperation(
         "PlaybackAccessToken",
-        "3093517e37e4f4cb48906155bcd894150aef92617939236d2508f3375ab732ce",
+        "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9",
         variables={
             "isLive": True,
-            "login": ...,  # channel login
             "isVod": False,
+            "login": ...,  # channel login
+            "platform": "web",
+            "playerType": "site",
             "vodID": "",
-            "playerType": "site"
         },
     ),
     # returns live channels for a particular game
@@ -379,7 +389,6 @@ GQL_OPERATIONS: dict[str, GQLOperation] = {
                 "requestID": "JIRA-VXP-2397",
             },
             "includeIsDJ": False,
-            "includePreviewBlur": True,
             "sortTypeIsRecency": False,
         },
     ),
