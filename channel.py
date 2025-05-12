@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import json
 import asyncio
 import logging
 from typing import Any, SupportsInt, cast, TYPE_CHECKING
@@ -73,7 +75,7 @@ class Stream:
             return self.broadcast_id == other.broadcast_id
         return NotImplemented
 
-    async def get_stream_url(self) -> URLType:
+    async def get_stream_url(self) -> URLType | None:
         if self._stream_url is not None:
             return self._stream_url
         # get the stream playback access token from GQL
@@ -94,6 +96,20 @@ class Stream:
                 ),
             ) as qualities_response:
                 available_qualities = await qualities_response.text()
+            # try to decode the suspected JSON
+            try:
+                available_json: JsonType = json.loads(available_qualities)
+            except json.JSONDecodeError:
+                # No JSON: this is the expected path. Do nothing and continue with the below.
+                pass
+            else:
+                # JSON was decoded - if there's an error, log it and report failure
+                if isinstance(available_json, list):
+                    available_json = available_json[0]
+                if "error" in available_json:
+                    logger.error(f"Stream URL get error: \"{available_json['error']}\"")
+                    self.channel.set_offline()
+                return None
             # pick the last URL from the list, usually with the lowest quality stream
             self._stream_url = cast(URLType, URL(available_qualities.strip().split("\n")[-1]))
         except (aiohttp.InvalidURL, ValueError):
@@ -117,7 +133,6 @@ class Channel:
         self.id: int = int(id)
         self._login: str = login
         self._display_name: str | None = display_name
-        self.points: int | None = None
         self._stream: Stream | None = None
         self._pending_stream_up: asyncio.Task[Any] | None = None
         # ACL-based channels are:
@@ -145,17 +160,6 @@ class Channel:
             twitch, id=channel["id"], login=channel["login"], display_name=channel["displayName"]
         )
         self._stream = Stream.from_directory(self, data, drops_enabled=drops_enabled)
-        return self
-
-    @classmethod
-    async def from_name(
-        cls, twitch: Twitch, channel_login: str, *, acl_based: bool = False
-    ) -> Channel:
-        self = cls(twitch, id=0, login=channel_login, acl_based=acl_based)
-        # id and display name to be filled/overwritten by get_stream
-        stream = await self.get_stream()
-        if stream is not None:
-            self._stream = stream
         return self
 
     def __repr__(self) -> str:
@@ -273,9 +277,9 @@ class Channel:
         channel_data: JsonType | None = response["data"]["user"]
         if not channel_data:
             return None
-        # fill in channel_id and display name
-        self.id = int(channel_data["id"])
-        self._display_name = channel_data["displayName"]
+        # fill in display name
+        if self._display_name is None:
+            self._display_name = channel_data["displayName"]
         if not channel_data["stream"]:
             return None
         stream = Stream.from_get_stream(self, channel_data)
@@ -299,9 +303,6 @@ class Channel:
         """
         Fetches the current channel stream, and if one exists,
         updates it's game, title, tags and viewers. Updates channel status in general.
-
-        Setting 'trigger_events' to True will trigger on_online and on_offline events,
-        if the new status differs from the one set before the call.
         """
         old_stream = self._stream
         self._stream = await self.get_stream()
@@ -349,60 +350,58 @@ class Channel:
             old_stream = self._stream
             self._stream = None
             self._twitch.on_channel_update(self, old_stream, self._stream)
-            needs_display = False
+            needs_display = False  # calling on_channel_update always does a display at the end
         if needs_display:
-            self.display()
-
-    async def claim_bonus(self):
-        """
-        This claims bonus points if they're available, and fills out the 'points' attribute.
-        """
-        response: JsonType = await self._twitch.gql_request(
-            GQL_OPERATIONS["ChannelPointsContext"].with_variables({"channelLogin": self._login})
-        )
-        channel_data: JsonType = response["data"]["community"]["channel"]
-        self.points = channel_data["self"]["communityPoints"]["balance"]
-        claim_available: JsonType = (
-            channel_data["self"]["communityPoints"]["availableClaim"]
-        )
-        if claim_available:
-            await self._twitch.claim_points(channel_data["id"], claim_available["id"])
-            logger.info("Claimed bonus points")
-        else:
-            # calling 'claim_points' is going to refresh the display via the websocket payload,
-            # so if we're not calling it, we need to do it ourselves
             self.display()
 
     async def send_watch(self) -> bool:
         """
-        This uses the encoded payload on spade url to simulate watching the stream.
-        Optimally, send every 60 seconds to advance drops.
+        This performs a HEAD request on the stream's current playlist,
+        to simulate watching the stream.
+        Optimally, send every ~20 seconds to advance drops.
         """
         if self._stream is None:
             return False
         # get the stream url
         stream_url = await self._stream.get_stream_url()
+        if stream_url is None:
+            return False
         # fetch a list of chunks available to download for the stream
         # NOTE: the CDN is configured to forcibly disconnect shortly after serving the list,
         # if we don't do it yourselves. Lets help it by actually doing it ourselves instead.
-        available_chunks: str = ''
+        async with self._twitch.request(
+            "GET", stream_url, headers={"Connection": "close"}
+        ) as chunks_response:
+            if chunks_response.status >= 400:
+                # if the stream goes OFFLINE, trying to get a list of chunks returns a 404
+                return False
+            available_chunks: str = await chunks_response.text()
+        # the response may contain some invalid JSON with duplicate double quotes
+        # in the value strings: we need to get rid of them by removing the "url" key entirely
+        # if no JSON can be found within the response, this is a NOOP
+        available_chunks = re.sub(r'"url": ?".+}",', '', available_chunks)
+        # try to decode the suspected JSON
         try:
-            async with self._twitch.request(
-                "GET", stream_url, headers={"Connection": "close"}
-            ) as chunks_response:
-                available_chunks = await chunks_response.text()
-            # the list contains ~10-13 chunks of the stream at 2s intervals,
-            # pick the last chunk URL available. Ensure it's not the end-of-stream tag,
-            # otherwise use the 2nd to last line.
-            chunks_list: list[str] = available_chunks.strip().split("\n")
-            selected_chunk: str = chunks_list[-1]
-            if selected_chunk == "#EXT-X-ENDLIST":
-                selected_chunk = chunks_list[-2]
-            stream_chunk_url: URLType = URLType(selected_chunk)
-            # sending a HEAD request is enough to advance the drops,
-            # without downloading the actual stream data
-            async with self._twitch.request("HEAD", stream_chunk_url) as head_response:
-                return head_response.status == 200
-        except aiohttp.InvalidURL as exc:
-            # Temporarily log the entire response into the output
-            raise MinerException(available_chunks) from exc
+            available_json: JsonType = json.loads(available_chunks)
+        except json.JSONDecodeError:
+            # No JSON: this is the expected path. Do nothing and continue with the below.
+            pass
+        else:
+            # JSON was decoded - if there's an error, log it and report failure
+            if isinstance(available_json, list):
+                available_json = available_json[0]
+            if "error" in available_json:
+                logger.error(f"Send watch error: \"{available_json['error']}\"")
+            return False
+        # the list contains ~10-13 chunks of the stream at 2s intervals,
+        # pick the last chunk URL available. Ensure it's not the end-of-stream tag,
+        # otherwise use the 2nd to last line.
+        chunks_list: list[str] = available_chunks.strip().split("\n")
+        selected_chunk: str = chunks_list[-1]
+        if selected_chunk == "#EXT-X-ENDLIST":
+            selected_chunk = chunks_list[-2]
+        stream_chunk_url: URLType = URLType(selected_chunk)
+        # sending a HEAD request is enough to advance the drops,
+        # without downloading the actual stream data
+        async with self._twitch.request("HEAD", stream_chunk_url) as head_response:
+            return head_response.status == 200

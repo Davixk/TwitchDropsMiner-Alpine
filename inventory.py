@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 import math
+import logging
+from enum import Enum
 from itertools import chain
 from typing import TYPE_CHECKING
 from functools import cached_property
 from datetime import datetime, timedelta, timezone
 
+from translate import _
 from channel import Channel
 from exceptions import GQLException
 from constants import GQL_OPERATIONS, URLType
@@ -20,6 +23,7 @@ if TYPE_CHECKING:
     from gui import GUIManager, InventoryOverview
 
 
+logger = logging.getLogger("TwitchDrops")
 DIMS_PATTERN = re.compile(r'-\d+x\d+(?=\.(?:jpg|png|gif)$)', re.I)
 
 
@@ -27,13 +31,28 @@ def remove_dimensions(url: URLType) -> URLType:
     return URLType(DIMS_PATTERN.sub('', url))
 
 
+class BenefitType(Enum):
+    UNKNOWN = "UNKNOWN"
+    BADGE = "BADGE"
+    EMOTE = "EMOTE"
+    DIRECT_ENTITLEMENT = "DIRECT_ENTITLEMENT"
+
+    def is_badge_or_emote(self) -> bool:
+        return self in (BenefitType.BADGE, BenefitType.EMOTE)
+
+
 class Benefit:
-    __slots__ = ("id", "name", "image_url")
+    __slots__ = ("id", "name", "type", "image_url")
 
     def __init__(self, data: JsonType):
         benefit_data: JsonType = data["benefit"]
         self.id: str = benefit_data["id"]
         self.name: str = benefit_data["name"]
+        self.type: BenefitType = (
+            BenefitType(benefit_data["distributionType"])
+            if benefit_data["distributionType"] in BenefitType.__members__.keys()
+            else BenefitType.UNKNOWN
+        )
         self.image_url: URLType = benefit_data["imageAssetURL"]
 
 
@@ -86,17 +105,6 @@ class BaseDrop:
     def preconditions_met(self) -> bool:
         campaign = self.campaign
         return all(campaign.timed_drops[pid].is_claimed for pid in self._precondition_drops)
-
-    @cached_property
-    def _all_preconditions(self) -> set[str]:
-        campaign = self.campaign
-        preconditions: set[str] = set(self._precondition_drops)
-        return preconditions.union(
-            *(
-                campaign.timed_drops[pid]._all_preconditions
-                for pid in self._precondition_drops
-            )
-        )
 
     def _base_earn_conditions(self) -> bool:
         # define when a drop can be earned or not
@@ -158,6 +166,19 @@ class BaseDrop:
             # notify the campaign about claiming
             # this will cause it to call our _on_claim, so no need to call it ourselves here
             self.campaign._on_claim()
+            claim_text = (
+                f"{self.campaign.game.name}\n"
+                f"{self.rewards_text()} "
+                f"({self.campaign.claimed_drops}/{self.campaign.total_drops})"
+            )
+            # two different claim texts, becase a new line after the game name
+            # looks ugly in the output window - replace it with a space
+            self._twitch.print(
+                _("status", "claimed_drop").format(drop=claim_text.replace('\n', ' '))
+            )
+            self._twitch.gui.tray.notify(claim_text, _("gui", "tray", "notification_title"))
+        else:
+            logger.error(f"Drop claim has potentially failed! Drop ID: {self.id}")
         return result
 
     async def _claim(self) -> bool:
@@ -222,14 +243,24 @@ class TimedDrop(BaseDrop):
     def remaining_minutes(self) -> int:
         return self.required_minutes - self.current_minutes
 
-    @property
-    def total_remaining_minutes(self) -> int:
-        return sum(
+    @cached_property
+    def total_required_minutes(self) -> int:
+        return self.required_minutes + max(
             (
-                self.campaign.timed_drops[pid].remaining_minutes
-                for pid in self._all_preconditions
+                self.campaign.timed_drops[pid].total_required_minutes
+                for pid in self._precondition_drops
             ),
-            start=self.remaining_minutes,
+            default=0,
+        )
+
+    @cached_property
+    def total_remaining_minutes(self) -> int:
+        return self.remaining_minutes + max(
+            (
+                self.campaign.timed_drops[pid].total_remaining_minutes
+                for pid in self._precondition_drops
+            ),
+            default=0,
         )
 
     @cached_property
@@ -242,11 +273,10 @@ class TimedDrop(BaseDrop):
 
     @property
     def availability(self) -> float:
-        if not self._base_can_earn():
-            # this verifies "self.total_remaining_minutes > 0" and "now < self.ends_at"
-            return math.inf
         now = datetime.now(timezone.utc)
-        return ((self.ends_at - now).total_seconds() / 60) / self.total_remaining_minutes
+        if self.required_minutes > 0 and self.total_remaining_minutes > 0 and now < self.ends_at:
+            return ((self.ends_at - now).total_seconds() / 60) / self.total_remaining_minutes
+        return math.inf
 
     def _base_earn_conditions(self) -> bool:
         return super()._base_earn_conditions() and self.required_minutes > 0
@@ -260,6 +290,9 @@ class TimedDrop(BaseDrop):
         invalidate_cache(self, "progress", "remaining_minutes")
         self.campaign._on_minutes_changed()
         self._gui_inv.update_drop(self)
+
+    def _on_total_minutes_changed(self) -> None:
+        invalidate_cache(self, "total_required_minutes", "total_remaining_minutes")
 
     async def claim(self) -> bool:
         result = await super().claim()
@@ -342,9 +375,19 @@ class DropsCampaign:
     def total_drops(self) -> int:
         return len(self.timed_drops)
 
+    @property
+    def eligible(self) -> bool:
+        return self.linked or self.has_badge_or_emote
+
+    @cached_property
+    def has_badge_or_emote(self) -> bool:
+        return any(
+            benefit.type.is_badge_or_emote() for drop in self.drops for benefit in drop.benefits
+        )
+
     @cached_property
     def finished(self) -> bool:
-        return all(d.is_claimed for d in self.drops)
+        return all(d.is_claimed or d.required_minutes <= 0 for d in self.drops)
 
     @cached_property
     def claimed_drops(self) -> int:
@@ -353,6 +396,10 @@ class DropsCampaign:
     @cached_property
     def remaining_drops(self) -> int:
         return sum(not d.is_claimed for d in self.drops)
+
+    @cached_property
+    def required_minutes(self) -> int:
+        return max(d.total_required_minutes for d in self.drops)
 
     @cached_property
     def remaining_minutes(self) -> int:
@@ -372,14 +419,16 @@ class DropsCampaign:
             drop._on_claim()
 
     def _on_minutes_changed(self) -> None:
-        invalidate_cache(self, "progress", "remaining_minutes")
+        invalidate_cache(self, "progress", "required_minutes", "remaining_minutes")
+        for drop in self.drops:
+            drop._on_total_minutes_changed()
 
     def get_drop(self, drop_id: str) -> TimedDrop | None:
         return self.timed_drops.get(drop_id)
 
     def _base_can_earn(self, channel: Channel | None = None) -> bool:
         return (
-            self.linked  # account is connected
+            self.eligible  # account is eligible
             and self.active  # campaign is active
             # channel isn't specified, or there's no ACL, or the channel is in the ACL
             and (channel is None or not self.allowed_channels or channel in self.allowed_channels)
@@ -393,7 +442,7 @@ class DropsCampaign:
         # Same as can_earn, but doesn't check the channel
         # and uses a future timestamp to see if we can earn this campaign later
         return (
-            self.linked
+            self.eligible
             and self.ends_at > datetime.now(timezone.utc)
             and self.starts_at < stamp
             and any(drop.can_earn_within(stamp) for drop in self.drops)

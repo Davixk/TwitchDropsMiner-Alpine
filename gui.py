@@ -35,6 +35,8 @@ from exceptions import MinerException, ExitRequest
 from utils import resource_path, set_root_icon, webopen, Game, _T
 from constants import (
     SELF_PATH,
+    IS_PACKAGED,
+    SCRIPTS_PATH,
     WINDOW_TITLE,
     LOGGING_LEVELS,
     MAX_WEBSOCKETS,
@@ -602,7 +604,7 @@ class LoginForm:
                 continue
             return login_data
 
-    async def ask_enter_code(self, user_code: str) -> None:
+    async def ask_enter_code(self, page_url: URL, user_code: str) -> None:
         self.update(_("gui", "login", "required"), None)
         # ensure the window isn't hidden into tray when this runs
         self._manager.grab_attention(sound=False)
@@ -612,7 +614,7 @@ class LoginForm:
             f"Enter this code on the Twitch's device activation page: {user_code}"
         )
         await asyncio.sleep(4)
-        webopen("https://www.twitch.tv/activate")
+        webopen(page_url)
 
     def update(self, status: str, user_id: int | None):
         if user_id is not None:
@@ -873,7 +875,6 @@ class ConsoleOutput:
 class _Buttons(TypedDict):
     frame: ttk.Frame
     switch: ttk.Button
-    load_points: ttk.Button
 
 
 class ChannelList:
@@ -896,15 +897,9 @@ class ChannelList:
                 state="disabled",
                 command=manager._twitch.state_change(State.CHANNEL_SWITCH),
             ),
-            "load_points": ttk.Button(
-                buttons_frame,
-                text=_("gui", "channels", "load_points"),
-                command=self._load_points,
-            ),
         }
         buttons_frame.grid(column=0, row=0, columnspan=2)
         self._buttons["switch"].grid(column=0, row=0)
-        self._buttons["load_points"].grid(column=1, row=0)
         scroll = ttk.Scrollbar(frame, orient="vertical")
         self._table = table = ttk.Treeview(
             frame,
@@ -940,11 +935,6 @@ class ChannelList:
         self._add_column(
             "viewers",
             _("gui", "channels", "headings", "viewers"),
-            width_template="1234567",
-        )
-        self._add_column(
-            "points",
-            _("gui", "channels", "headings", "points"),
             width_template="1234567",
         )
         self._add_column("acl_base", "📋", width_template="✔")
@@ -1010,13 +1000,6 @@ class ChannelList:
             self._buttons["switch"].config(state="normal")
         else:
             self._buttons["switch"].config(state="disabled")
-
-    def _load_points(self):
-        # disable the button afterwards
-        self._buttons["load_points"].config(state="disabled")
-        asyncio.gather(
-            *(ch.claim_bonus() for ch in self._manager._twitch.channels.values())
-        )
 
     def _measure(self, text: str) -> int:
         # we need this because columns have 9-10 pixels of padding that cuts text off
@@ -1114,18 +1097,12 @@ class ChannelList:
         viewers = ""
         if channel.viewers is not None:
             viewers = str(channel.viewers)
-        # points
-        points = ""
-        if channel.points is not None:
-            points = str(channel.points)
         if iid in self._channel_map:
             self._set(iid, "game", game)
             self._set(iid, "drops", drops)
             self._set(iid, "status", status)
             self._set(iid, "viewers", viewers)
             self._set(iid, "acl_base", acl_based)
-            if points != "":  # we still want to display 0
-                self._set(iid, "points", points)
         elif add:
             self._channel_map[iid] = channel
             self._insert(
@@ -1133,7 +1110,6 @@ class ChannelList:
                 {
                     "game": game,
                     "drops": drops,
-                    "points": points,
                     "status": status,
                     "viewers": viewers,
                     "acl_base": acl_based,
@@ -1402,7 +1378,7 @@ class InventoryOverview:
         self._canvas.bind("<Leave>", lambda e: self._canvas.unbind_all("<MouseWheel>"))
         self._canvas.create_window(0, 0, anchor="nw", window=self._main_frame)
         self._campaigns: dict[DropsCampaign, CampaignDisplay] = {}
-        self._drops: dict[str, MouseOverLabel] = {}
+        self._drops: dict[str, ttk.Label] = {}
 
     def _update_visibility(self, campaign: DropsCampaign):
         # True if the campaign is supposed to show, False makes it hidden.
@@ -1414,15 +1390,9 @@ class InventoryOverview:
         finished = bool(self._filters["finished"].get())
         priority_only = self._settings.priority_mode is PriorityMode.PRIORITY_ONLY
         if (
-            campaign.remaining_minutes > 0  # don't show sub-only campaigns
-            and (not_linked or campaign.linked)
-            and (
-                campaign.active
-                or upcoming
-                and campaign.upcoming
-                or expired
-                and campaign.expired
-            )
+            campaign.required_minutes > 0  # don't show sub-only campaigns
+            and (not_linked or campaign.eligible)
+            and (campaign.active or upcoming and campaign.upcoming or expired and campaign.expired)
             and (
                 excluded
                 or (
@@ -1515,7 +1485,7 @@ class InventoryOverview:
             takefocus=False,
         ).grid(column=1, row=2, sticky="w", padx=4)
         # Linking status
-        if campaign.linked:
+        if campaign.eligible:
             link_kwargs = {
                 "style": "",
                 "text": _("gui", "inventory", "status", "linked"),
@@ -1552,9 +1522,7 @@ class InventoryOverview:
         ).grid(column=1, row=4, sticky="nw", padx=4)
         # Image
         campaign_image = await self._cache.get(campaign.image_url, size=(108, 144))
-        ttk.Label(campaign_frame, image=campaign_image).grid(  # type: ignore[arg-type]
-            column=0, row=1, rowspan=4
-        )
+        ttk.Label(campaign_frame, image=campaign_image).grid(column=0, row=1, rowspan=4)
         # Drops separator
         ttk.Separator(campaign_frame, orient="vertical", takefocus=False).grid(
             column=2, row=0, rowspan=5, sticky="ns"
@@ -1580,10 +1548,10 @@ class InventoryOverview:
                 ttk.Label(
                     benefits_frame,
                     text=benefit.name,
-                    image=image,  # type: ignore[arg-type]
+                    image=image,
                     compound="bottom",
                 ).grid(column=i, row=0, padx=5)
-            self._drops[drop.id] = label = MouseOverLabel(drop_frame)
+            self._drops[drop.id] = label = ttk.Label(drop_frame, justify=tk.CENTER)
             self.update_progress(drop, label)
             label.grid(column=0, row=1)
         if self._manager.tabs.current_tab() == 1:
@@ -1596,12 +1564,9 @@ class InventoryOverview:
         self._drops.clear()
         self._campaigns.clear()
 
-    def update_progress(self, drop: TimedDrop, label: MouseOverLabel) -> None:
-        # Returns: main text, alt text, text color
-        alt_text: str = ""
+    def update_progress(self, drop: TimedDrop, label: ttk.Label) -> None:
         progress_text: str
-        reverse: bool = False
-        progress_color: str = ""
+        progress_color: str = ''
         if drop.is_claimed:
             progress_color = "green"
             progress_text = _("gui", "inventory", "status", "claimed")
@@ -1613,28 +1578,30 @@ class InventoryOverview:
                 percent=f"{drop.progress:3.1%}",
                 minutes=drop.required_minutes,
             )
-        else:
-            progress_text = _("gui", "inventory", "minutes_progress").format(
-                minutes=drop.required_minutes
-            )
-            if datetime.now(timezone.utc) < drop.starts_at > drop.campaign.starts_at:
-                # this drop can only be earned later than the campaign start
-                alt_text = _("gui", "inventory", "starts").format(
-                    time=drop.starts_at.astimezone().replace(microsecond=0, tzinfo=None)
-                )
-                reverse = True
-            elif drop.ends_at < drop.campaign.ends_at:
+            if drop.ends_at < drop.campaign.ends_at:
                 # this drop becomes unavailable earlier than the campaign ends
-                alt_text = _("gui", "inventory", "ends").format(
+                progress_text += '\n' + _("gui", "inventory", "ends").format(
                     time=drop.ends_at.astimezone().replace(microsecond=0, tzinfo=None)
                 )
-                reverse = True
-        label.config(
-            text=progress_text,
-            alt_text=alt_text,
-            reverse=reverse,
-            foreground=progress_color,
-        )
+        else:
+            if drop.required_minutes > 0:
+                progress_text = _("gui", "inventory", "minutes_progress").format(
+                    minutes=drop.required_minutes
+                )
+            else:
+                # required_minutes is zero for subscription-based drops
+                progress_text = ''
+            if datetime.now(timezone.utc) < drop.starts_at > drop.campaign.starts_at:
+                # this drop can only be earned later than the campaign start
+                progress_text += '\n' + _("gui", "inventory", "starts").format(
+                    time=drop.starts_at.astimezone().replace(microsecond=0, tzinfo=None)
+                )
+            elif drop.ends_at < drop.campaign.ends_at:
+                # this drop becomes unavailable earlier than the campaign ends
+                progress_text += '\n' + _("gui", "inventory", "ends").format(
+                    time=drop.ends_at.astimezone().replace(microsecond=0, tzinfo=None)
+                )
+        label.config(text=progress_text, foreground=progress_color)
 
     def update_drop(self, drop: TimedDrop) -> None:
         label = self._drops.get(drop.id)
@@ -1929,7 +1896,7 @@ class SettingsPanel:
         return f'"{SELF_PATH.resolve()!s}"'
 
     def _get_autostart_path(self) -> str:
-        flags: list[str] = [""]  # this will add a space between self path and flags
+        flags: list[str] = []
         # if applicable, include the current logging level as well
         for lvl_idx, lvl_value in LOGGING_LEVELS.items():
             if lvl_value == self._settings.logging_level:
@@ -1938,7 +1905,10 @@ class SettingsPanel:
                 break
         if self._vars["tray"].get():
             flags.append("--tray")
-        return self._get_self_path() + " ".join(flags)
+        if not IS_PACKAGED:
+            # non-packaged autostart has to be done through the venv path pythonw
+            return f"\"{SCRIPTS_PATH / 'pythonw'!s}\" {self._get_self_path()} {' '.join(flags)}"
+        return f"{self._get_self_path()} {' '.join(flags)}"
 
     def _get_linux_autostart_filepath(self) -> Path:
         autostart_folder: Path = Path("~/.config/autostart").expanduser()
@@ -2245,17 +2215,17 @@ class GUIManager:
             foreground=self._fixed_map("foreground"),
             background=self._fixed_map("background"),
         )
-        # remove Notebook.focus from the Notebook.Tab layout tree to avoid an ugly dotted line
-        # on tab selection. We fold the Notebook.focus children into Notebook.padding children.
-        if theme != "classic":
+        # add padding to the tab names
+        style.configure("TNotebook.Tab", padding=[8, 4])
+        # Skip these for classic theme or macOS
+        if theme != "classic" and sys.platform != "darwin":
+            # remove Notebook.focus from the Notebook.Tab layout tree to avoid an ugly dotted line
+            # on tab selection. We fold the Notebook.focus children into Notebook.padding children.
             original = style.layout("TNotebook.Tab")
             sublayout = original[0][1]["children"][0][1]
             sublayout["children"] = sublayout["children"][0][1]["children"]
             style.layout("TNotebook.Tab", original)
-        # add padding to the tab names
-        style.configure("TNotebook.Tab", padding=[8, 4])
-        # remove Checkbutton.focus dotted line from checkbuttons
-        if theme != "classic":
+            # remove Checkbutton.focus dotted line from checkbuttons
             style.configure("TCheckbutton", padding=0)
             original = style.layout("TCheckbutton")
             sublayout = original[0][1]["children"]
@@ -2693,7 +2663,6 @@ if __name__ == "__main__":
         game: str | None,
         drops: bool,
         viewers: int,
-        points: int,
         acl_based: bool,
     ):
         # status: 0 -> OFFLINE, 1 -> PENDING_ONLINE, 2 -> ONLINE
@@ -2710,7 +2679,6 @@ if __name__ == "__main__":
         return SimpleNamespace(
             name=name,
             iid=(iid := iid + 1),
-            points=points,
             online=bool(status),
             pending_online=pending,
             game=game_obj,
@@ -2732,7 +2700,7 @@ if __name__ == "__main__":
         td = total_drops
         cm = current_minutes
         tm = total_minutes
-        ref_stamp = datetime.now(timezone.utc).replace(minute=0, second=0)
+        ref_stamp = datetime.now(timezone.utc)
         image_url = (
             "https://static-cdn.jtvnw.net/twitch-drops-assets-prod/"
             "BENEFIT-81ab5665-b2f4-4179-96e6-74da5a82da28.jpeg"
@@ -2747,7 +2715,7 @@ if __name__ == "__main__":
                 expired=False,
                 active=False,
                 upcoming=True,
-                linked=False,
+                eligible=False,
                 finished=False,
                 link_url="https://google.com",
                 image_url="https://static-cdn.jtvnw.net/ttv-boxart/460630-285x380.jpg",
@@ -2757,6 +2725,7 @@ if __name__ == "__main__":
                 timed_drops={},
                 claimed_drops=cd,
                 total_drops=td,
+                required_minutes=tm,
                 remaining_drops=td - cd,
                 progress=(cd * tm + cm) / (td * tm),
                 remaining_minutes=(td - cd) * tm - cm,
@@ -2767,8 +2736,10 @@ if __name__ == "__main__":
             is_claimed=False,
             preconditions=True,
             benefits=benefits,
-            rewards_text=lambda: ", ".join(b.name for b in benefits),
-            progress=cm / tm,
+            rewards_text=lambda: ', '.join(b.name for b in benefits),
+            starts_at=ref_stamp + timedelta(seconds=2),
+            ends_at=ref_stamp + timedelta(days=7) - timedelta(seconds=2),
+            progress=cm/tm,
             current_minutes=cm,
             required_minutes=tm,
             remaining_minutes=tm - cm,
@@ -2785,13 +2756,13 @@ if __name__ == "__main__":
                 priority=[],
                 proxy=URL(),
                 dark_theme=False,
-                autostart=False,
+                alter=lambda: None,
                 language="English",
                 prioritize_by_ending_soonest=False,
                 autostart_tray=False,
                 exclude={"Lit Game"},
                 tray_notifications=True,
-                alter=lambda: None,
+                logging_level=LOGGING_LEVELS[0],
                 priority_mode=PriorityMode.PRIORITY_ONLY,
             )
         )
@@ -2825,24 +2796,14 @@ if __name__ == "__main__":
                 game=None,
                 drops=False,
                 viewers=0,
-                points=0,
                 acl_based=True,
             ),
             add=True,
         )
         channel = create_channel(
-            name="Traitus",
-            status=1,
-            game=None,
-            drops=False,
-            viewers=0,
-            points=0,
-            acl_based=True,
+            name="Traitus", status=1, game=None, drops=False, viewers=0, acl_based=True
         )
-        gui.channels.display(
-            channel,
-            add=True,
-        )
+        gui.channels.display(channel, add=True)
         gui.channels.set_watching(channel)
         gui.channels.display(
             create_channel(
@@ -2851,7 +2812,6 @@ if __name__ == "__main__":
                 game="Best Game",
                 drops=True,
                 viewers=42,
-                points=1234567,
                 acl_based=False,
             ),
             add=True,
@@ -2863,7 +2823,6 @@ if __name__ == "__main__":
                 game="Best Game",
                 drops=True,
                 viewers=69,
-                points=1234567,
                 acl_based=False,
             ),
             add=True,
@@ -2872,7 +2831,7 @@ if __name__ == "__main__":
         gui.channels.get_selection()
         # Inventory overview
         drop = create_drop(
-            "Wardrobe Cleaning", "Cleaning Masters", ["Fancy Pants"], 2, 7, 239, 240
+            "Wardrobe Cleaning", "Cleaning Masters", ["Fancy Pants"], 2, 7, 0, 240
         )
         campaign = drop.campaign
         await gui.inv.add_campaign(campaign)
@@ -2893,26 +2852,34 @@ if __name__ == "__main__":
         # Drop progress
         gui.display_drop(drop, countdown=False)
         await asyncio.sleep(3)
+
         gui.progress.start_timer()
         await asyncio.sleep(5)
+
         gui.clear_drop()
         await asyncio.sleep(5)
-        gui.display_drop(drop)
 
+        campaign.can_earn = lambda: True
+        gui.inv.update_drop(drop)
+        gui.display_drop(drop)
+        await asyncio.sleep(10)
+
+        drop.current_minutes = 239
+        drop.remaining_minutes = 1
+        drop.progress = 239/240
+        campaign.remaining_minutes -= 1
+        gui.inv.update_drop(drop)
+        gui.display_drop(drop)
         await asyncio.sleep(63)
+
         drop.current_minutes = 240
         drop.remaining_minutes = 0
         drop.progress = 1.0
-        campaign = drop.campaign
         campaign.remaining_minutes -= 1
         campaign.progress = 3 / 7
         campaign.claimed_drops = 3
         campaign.remaining_drops = 4
-        gui.display_drop(drop)
-        await asyncio.sleep(10)
-        drop.current_minutes = 0
-        drop.remaining_minutes = 240
-        drop.progress = 0.0
+        gui.inv.update_drop(drop)
         gui.display_drop(drop)
 
     def main_exit(task: asyncio.Task[None]) -> None:

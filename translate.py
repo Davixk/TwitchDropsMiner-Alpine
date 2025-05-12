@@ -18,8 +18,6 @@ class StatusMessages(TypedDict):
     goes_online: str
     goes_offline: str
     claimed_drop: str
-    claimed_points: str
-    earned_points: str
     no_channel: str
     no_campaign: str
 
@@ -114,14 +112,12 @@ class GUIChannelHeadings(TypedDict):
     channel: str
     status: str
     game: str
-    points: str
     viewers: str
 
 
 class GUIChannels(TypedDict):
     name: str
     switch: str
-    load_points: str
     online: str
     pending: str
     offline: str
@@ -233,8 +229,6 @@ default_translation: Translation = {
         "goes_online": "{channel} goes ONLINE, switching...",
         "goes_offline": "{channel} goes OFFLINE, switching...",
         "claimed_drop": "Claimed drop: {drop}",
-        "claimed_points": "Claimed bonus points: {points}",
-        "earned_points": "Earned points for watching: {points}, total: {balance}",
         "no_channel": "No available channels to watch. Waiting for an ONLINE channel...",
         "no_campaign": "No active campaigns to mine drops for. Waiting for an active campaign...",
     },
@@ -326,7 +320,6 @@ default_translation: Translation = {
         "channels": {
             "name": "Channels",
             "switch": "Switch",
-            "load_points": "Load Points",
             "online": "ONLINE  ✔",
             "pending": "OFFLINE ⏳",
             "offline": "OFFLINE ❌",
@@ -335,7 +328,6 @@ default_translation: Translation = {
                 "status": "Status",
                 "game": "Game",
                 "viewers": "Viewers",
-                "points": "Points",
             },
         },
         "inventory": {
@@ -409,19 +401,21 @@ default_translation: Translation = {
                 "1. Login to the application.\n"
                 "2. Ensure your Twitch account is linked to all campaigns "
                 "you're interested in mining.\n"
-                "3. If you're interested in just mining everything, "
-                "uncheck \"Priority only\" and press \"Reload\".\n"
+                "3. If you're interested in mining everything possible, "
+                "change the Priority Mode to anything other than \"Priority list only\" "
+                "and press on \"Reload\".\n"
                 "4. If you want to mine specific games first, use the \"Priority\" list "
                 "to set up an ordered list of games of your choice. "
                 "Games from the top of the list will be attempted to be mined first, "
                 "before the ones lower down the list.\n"
-                "5. Keep the \"Priority only\" option checked to avoid mining games "
-                "that are not on the priority list. Or not - it's up to you.\n"
+                "5. Keep the \"Priority mode\" selected as \"Priority list only\", "
+                "to avoid mining games that are not on the priority list. "
+                "Or not - it's up to you.\n"
                 "6. Use the \"Exclude\" list to tell the application "
                 "which games should never be mined.\n"
-                "7. Changing the contents of either of the lists or changing the state "
-                "of the \"Priority only\" option, requires you to press \"Reload\" "
-                "for the changes to take effect."
+                "7. Changing the contents of either of the lists, or changing "
+                "the \"Priority mode\", requires you to press on \"Reload\" "
+                "for the changes to take an effect."
             ),
         },
     },
