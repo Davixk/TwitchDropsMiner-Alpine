@@ -75,7 +75,7 @@
             "cleanup": "Membersihkan saluran...",
             "gathering": "Pencarian saluran langsung...",
             "switching": "Koleksi saluran yang sedang berlangsung...",
-            "fetching_inventory": "Mmengambil inventaris...",
+            "fetching_inventory": "Mengambil inventaris...",
             "fetching_campaigns": "Mengambil kampanye...",
             "adding_campaigns": "Menambahkan daftar kampanye ke inventaris... {counter}"
         },
