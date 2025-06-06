@@ -1,37 +1,101 @@
-name: sync-fork-and-add-tag
+name: Sync Upstream and Create PR
 on:
-  schedule:
-    - cron: '27 7 * * *'
-  workflow_dispatch: { }
+    schedule:
+        # Run twice a week: Monday and Thursday at 7:27 AM UTC
+        - cron: "27 7 * * 1,4"
+    workflow_dispatch: {}
 jobs:
-  sync:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.WORKFLOW_TOKEN }}
-      - name: Sync fork and possibly tag
-        run: |
-          prev_head=$(git rev-parse HEAD)
-          gh repo sync "$REPOSITORY" -b "$BRANCH_NAME"
-          new_head=$(git rev-parse HEAD)
-          if [ "$prev_head" != "$new_head" ]; then
-            echo "New commits found; creating a date-based tag..."
-            date_tag="v$(date +'%Y.%m.%d')"
-            # Check if the tag already exists
-            if git rev-parse "refs/tags/$date_tag" >/dev/null 2>&1; then
-              echo "Tag $date_tag already exists. Skipping."
-            else
-              git tag "$date_tag"
-              git push origin --tags
-            fi
-          else
-            echo "No new commits. Skipping tag creation."
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-          BRANCH_NAME: ${{ github.ref_name }}
+    sync-and-pr:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: write
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.WORKFLOW_TOKEN }}
+                  fetch-depth: 0
+
+            - name: Configure git
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            - name: Add upstream remote and fetch
+              run: |
+                  git remote add upstream https://github.com/DevilXD/TwitchDropsMiner.git
+                  git fetch upstream
+
+            - name: Create or update sync branch
+              run: |
+                  SYNC_BRANCH="devilxk/master"
+
+                  # Check if branch exists locally
+                  if git show-ref --verify --quiet refs/heads/$SYNC_BRANCH; then
+                    echo "Branch $SYNC_BRANCH exists locally, checking it out"
+                    git checkout $SYNC_BRANCH
+                  else
+                    # Check if branch exists on remote
+                    if git show-ref --verify --quiet refs/remotes/origin/$SYNC_BRANCH; then
+                      echo "Branch $SYNC_BRANCH exists on remote, checking it out"
+                      git checkout -b $SYNC_BRANCH origin/$SYNC_BRANCH
+                    else
+                      echo "Branch $SYNC_BRANCH doesn't exist, creating it from upstream/master"
+                      git checkout -b $SYNC_BRANCH upstream/master
+                      git push -u origin $SYNC_BRANCH
+                    fi
+                  fi
+
+            - name: Merge upstream changes
+              run: |
+                  SYNC_BRANCH="devilxk/master"
+
+                  # Get current commit hash
+                  prev_commit=$(git rev-parse HEAD)
+
+                  # Merge upstream/master
+                  git merge upstream/master --no-edit
+
+                  # Get new commit hash
+                  new_commit=$(git rev-parse HEAD)
+
+                  # Push changes
+                  git push origin $SYNC_BRANCH
+
+                  # Set outputs for next step
+                  echo "prev_commit=$prev_commit" >> $GITHUB_ENV
+                  echo "new_commit=$new_commit" >> $GITHUB_ENV
+                  echo "sync_branch=$SYNC_BRANCH" >> $GITHUB_ENV
+
+            - name: Create Pull Request
+              run: |
+                  # Only create PR if there are new changes
+                  if [ "$prev_commit" != "$new_commit" ]; then
+                    echo "New changes detected, creating/updating PR"
+                    
+                    # Check if PR already exists
+                    existing_pr=$(gh pr list --head "$sync_branch" --base dev --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+                    
+                    if [ -n "$existing_pr" ]; then
+                      echo "PR #$existing_pr already exists and will be auto-updated"
+                    else
+                      echo "Creating new PR"
+                      gh pr create \
+                        --title "Sync upstream changes from DevilXD/TwitchDropsMiner" \
+                        --body "Automated sync of changes from upstream repository DevilXD/TwitchDropsMiner:master to dev branch.
+
+                      This PR contains the latest changes from the upstream repository.
+                      
+                      **Changes included:**
+                      - Commits from $prev_commit to $new_commit
+                      
+                      Created automatically by GitHub Actions." \
+                        --head "$sync_branch" \
+                        --base dev
+                    fi
+                  else
+                    echo "No new changes detected, skipping PR creation"
+                  fi
+              env:
+                  GH_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
