@@ -5,11 +5,18 @@ on:
     branches:
       - dev
       - stable
+    paths-ignore:
+      - .github/*
+      - .vscode/*
+      - .gitignore
   pull_request:
     branches:
       - dev
       - stable
-
+    paths-ignore:
+      - .github/*
+      - .vscode/*
+      - .gitignore
   workflow_dispatch:
 
 jobs:
