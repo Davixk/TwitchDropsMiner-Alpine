@@ -17,7 +17,7 @@ jobs:
             - name: DevilXD Upstream to PR
               uses: fopina/upstream-to-pr@v1
               with:
-                  token: ${{ secrets.UPSTREAM_TO_PR_TOKEN }}
+                  token: ${{ secrets.UPSTREAM_TO_PR_PAT }}
                   upstream-repository: https://github.com/devilxd/twitchdropsminer.git
                   upstream-branch: master
                   keep-old: false
@@ -26,7 +26,7 @@ jobs:
             - name: Windows200000 Upstream to PR
               uses: fopina/upstream-to-pr@v1
               with:
-                  token: ${{ secrets.UPSTREAM_TO_PR_TOKEN }}
+                  token: ${{ secrets.UPSTREAM_TO_PR_PAT }}
                   upstream-repository: https://github.com/Windows200000/TwitchDropsMiner-updated.git
                   upstream-branch: master
                   keep-old: false
@@ -35,7 +35,7 @@ jobs:
             - name: fireph Upstream to PR
               uses: fopina/upstream-to-pr@v1
               with:
-                  token: ${{ secrets.UPSTREAM_TO_PR_TOKEN }}
+                  token: ${{ secrets.UPSTREAM_TO_PR_PAT }}
                   upstream-repository: https://github.com/fireph/TwitchDropsMiner-Alpine.git
                   upstream-branch: master
                   keep-old: false
