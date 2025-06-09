@@ -23,11 +23,11 @@ jobs:
                   keep-old: false
                   reviewers: Davixk
             
-            - name: Windows2000 Upstream to PR
+            - name: Windows200000 Upstream to PR
               uses: fopina/upstream-to-pr@v1
               with:
                   token: ${{ secrets.UPSTREAM_TO_PR_TOKEN }}
-                  upstream-repository: https://github.com/Windows2000/TwitchDropsMiner-updated.git
+                  upstream-repository: https://github.com/Windows200000/TwitchDropsMiner-updated.git
                   upstream-branch: master
                   keep-old: false
                   reviewers: Davixk
