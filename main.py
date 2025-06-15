@@ -157,11 +157,9 @@ if __name__ == "__main__":
             await client.run()
         except CaptchaRequired:
             exit_status = 1
-            client.prevent_close()
             client.print(_("error", "captcha"))
         except Exception:
             exit_status = 1
-            client.prevent_close()
             client.print("Fatal error encountered:\n")
             client.print(traceback.format_exc())
         finally:
@@ -170,14 +168,6 @@ if __name__ == "__main__":
                 loop.remove_signal_handler(signal.SIGTERM)
             client.print(_("gui", "status", "exiting"))
             await client.shutdown()
-        if not client.gui.close_requested:
-            # user didn't request the closure
-            client.gui.tray.change_icon("error")
-            client.print(_("status", "terminated"))
-            client.gui.status.update(_("gui", "status", "terminated"))
-            # notify the user about the closure
-            client.gui.grab_attention(sound=True)
-        await client.gui.wait_until_closed()
         # save the application state
         # NOTE: we have to do it after wait_until_closed,
         # because the user can alter some settings between app termination and closing the window
