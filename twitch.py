@@ -1308,6 +1308,14 @@ class Twitch:
                                     delay = 5
                                 force_retry = True
                                 break
+                            elif error_dict["message"] == "server error":
+                                # nullify the key the error path points to
+                                data_dict: JsonType = response_json["data"]
+                                path: list[str] = error_dict.get("path", [])
+                                for key in path[:-1]:
+                                    data_dict = data_dict[key]
+                                data_dict[path[-1]] = None
+                                break
                             elif (
                                 error_dict["message"] in (
                                     "service timeout",
@@ -1512,11 +1520,17 @@ class Twitch:
         if watching_channel is None:
             # if we aren't watching anything, we can't earn any drops
             return None
+        watching_game: Game | None = watching_channel.game
+        if watching_game is None:
+            # if the channel isn't playing anything in particular, we can't determine the drop
+            return None
         drops: list[TimedDrop] = []
         for campaign in self.inventory:
-            # can be earned on this channel
-            if (campaign.can_earn(watching_channel)):
-                # add only the drops we can actually earn
+            if (
+                campaign.game == watching_game
+                or campaign.has_badge_or_emote
+                and campaign.can_earn(watching_channel)
+            ):
                 drops.extend(drop for drop in campaign.drops if drop.can_earn(watching_channel))
         if drops:
             drops.sort(key=lambda d: d.remaining_minutes)
